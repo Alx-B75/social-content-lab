@@ -40,6 +40,7 @@ class SourceRecord(BaseModel):
     stored_path: Path | None = None
     mime_type: str | None = None
     file_size_bytes: int | None = None
+    duration_seconds: float | None = None
     width: int | None = None
     height: int | None = None
     aspect_ratio: str | None = None

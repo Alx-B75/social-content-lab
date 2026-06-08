@@ -5,26 +5,50 @@ from typing import Any
 import streamlit as st
 
 from src.models.planning import ClarifyingAnswers, CostBand, Question, QuestionGroup
+from src.models.project import ContentProject
+from src.models.source import SourceRecord, SourceType
+from src.services.planning_defaults import infer_aspect_ratio, normalize_clarifying_answers, resolve_aspect_ratio, resolve_duration_seconds
 
 
-def render_questions_panel(question_groups: list[QuestionGroup], current_answers: ClarifyingAnswers) -> ClarifyingAnswers:
+def render_questions_panel(
+    question_groups: list[QuestionGroup],
+    current_answers: ClarifyingAnswers,
+    project: ContentProject,
+    sources: list[SourceRecord],
+) -> ClarifyingAnswers:
     """Render grouped clarifying questions and return collected answers."""
     st.header("3. Clarifying questions")
+    current_answers = normalize_clarifying_answers(current_answers, project)
     values = current_answers.model_dump()
+    values["resolved_duration_seconds"] = resolve_duration_seconds(project, current_answers)
+    values["inferred_aspect_ratio"] = infer_aspect_ratio(values.get("platform"), values.get("output_format"))
+    values["resolved_aspect_ratio"] = resolve_aspect_ratio(current_answers)
+    st.caption(f"Inferred aspect ratio: {values['inferred_aspect_ratio']}")
     with st.form("clarifying_questions_form"):
         for group in question_groups:
             st.subheader(group.title)
             for question in group.questions:
                 values[question.key] = _render_question(question, values.get(question.key))
+            if group.title == "Platform and format":
+                inferred = infer_aspect_ratio(values.get("platform"), values.get("output_format"))
+                st.info(f"Current inferred aspect ratio: {inferred}")
         submitted = st.form_submit_button("Save answers")
 
     if submitted:
+        values["aspect_ratio_override"] = None if values.get("aspect_ratio_override") == "Use inferred default" else values.get("aspect_ratio_override")
+        values["inferred_aspect_ratio"] = infer_aspect_ratio(values.get("platform"), values.get("output_format"))
         try:
+            candidate_answers = ClarifyingAnswers(**values)
+            values["aspect_ratio"] = resolve_aspect_ratio(candidate_answers)
+            values["resolved_aspect_ratio"] = values["aspect_ratio"]
+            values["resolved_duration_seconds"] = resolve_duration_seconds(project, candidate_answers)
             answers = ClarifyingAnswers(**values)
         except ValueError as error:
             st.error(f"Could not save answers: {error}")
             return current_answers
+        st.session_state["answers_saved"] = True
         st.success("Clarifying answers saved.")
+        _render_saved_answer_warnings(project, sources, answers)
         return answers
 
     return current_answers
@@ -39,11 +63,23 @@ def _render_question(question: Question, current_value: Any) -> Any:
     if question.input_type == "select":
         options = [""] + question.options
         selected_value = current_value.value if isinstance(current_value, CostBand) else current_value
+        if question.key == "aspect_ratio_override" and not selected_value:
+            selected_value = "Use inferred default"
         index = options.index(selected_value) if selected_value in options else 0
         return st.selectbox(question.prompt, options, index=index, key=f"q_{question.key}") or None
     if question.input_type == "number":
-        minimum = 0
-        default_value = int(current_value or 0)
+        if question.key == "target_length_seconds":
+            current_text = str(current_value) if current_value else ""
+            value = st.text_input(question.prompt, value=current_text, placeholder="Not applicable", key=f"q_{question.key}")
+            if not value.strip():
+                return None
+            try:
+                return int(value)
+            except ValueError:
+                st.warning("Target length must be a whole number of seconds.")
+                return current_value
+        minimum = 1
+        default_value = int(current_value or 1)
         value = st.number_input(question.prompt, min_value=minimum, value=default_value, step=1, key=f"q_{question.key}")
         return int(value) if value else None
     if question.input_type == "checkbox":
@@ -52,3 +88,14 @@ def _render_question(question: Question, current_value: Any) -> Any:
         current_list = current_value or []
         return st.multiselect(question.prompt, question.options, default=current_list, key=f"q_{question.key}")
     return st.text_input(question.prompt, value=current_value or "", key=f"q_{question.key}")
+
+
+def _render_saved_answer_warnings(project: ContentProject, sources: list[SourceRecord], answers: ClarifyingAnswers) -> None:
+    """Render validation warnings after answers are saved."""
+    has_video_source = any(source.source_type == SourceType.VIDEO for source in sources)
+    if answers.source_use == "copy closely" and has_video_source:
+        st.warning("Copying a video source closely requires keyframe extraction and rights review before generation.")
+    if answers.source_use == "copy closely" and not answers.rights_constraints:
+        st.warning("Licensing status is unclear. Add rights constraints or use the source only as inspiration/reference context.")
+    if not project.director_instructions.strip():
+        st.warning("Director instructions are empty, so defaults may be generic.")

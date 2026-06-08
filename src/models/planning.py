@@ -63,8 +63,13 @@ class ClarifyingAnswers(BaseModel):
     call_to_action: str | None = None
     platform: str | None = None
     aspect_ratio: str | None = None
+    inferred_aspect_ratio: str | None = None
+    aspect_ratio_override: str | None = None
+    resolved_aspect_ratio: str | None = None
     output_format: str | None = None
+    extracted_duration_seconds: int | None = None
     target_length_seconds: int | None = None
+    resolved_duration_seconds: int | None = None
     include_voiceover: bool = False
     include_subtitles: bool = True
     include_on_screen_text: bool = True
@@ -77,6 +82,7 @@ class ClarifyingAnswers(BaseModel):
     sensitive_materials: str | None = None
     video_source_treatment: str | None = None
     budget_priority: str | None = None
+    quality_level: str | None = None
     ai_video_acceptable: bool = False
     draft_variations: int | None = 2
     maximum_cost_band: CostBand | None = None
@@ -103,6 +109,8 @@ class ContentPack(BaseModel):
     core_message: str
     target_platform: str
     recommended_format: str
+    resolved_aspect_ratio: str | None = None
+    resolved_duration_seconds: int | None = None
     script_outline: list[str]
     shot_list: list[str]
     image_prompt: str

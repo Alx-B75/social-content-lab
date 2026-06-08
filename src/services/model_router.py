@@ -4,6 +4,7 @@ from src.models.planning import ClarifyingAnswers, ProviderType, WorkflowRecomme
 from src.models.project import ContentProject
 from src.models.source import SourceRecord, SourceReferenceStrategy, SourceType
 from src.services.cost_estimator import CostEstimator
+from src.services.planning_defaults import resolve_aspect_ratio, resolve_duration_seconds
 
 
 class ModelRouter:
@@ -26,7 +27,7 @@ class ModelRouter:
         route = self._select_route(platform, budget_priority, output_format, answers)
         provider_type = self._provider_for_route(route)
         warnings = self._build_warnings(sources, answers, project)
-        rationale = self._build_rationale(platform, budget_priority, output_format, sources, answers, route)
+        rationale = self._build_rationale(project, platform, budget_priority, output_format, sources, answers, route)
         return WorkflowRecommendation(
             recommended_workflow_route=route,
             recommended_model_category=self._model_category_for_route(route),
@@ -103,6 +104,8 @@ class ModelRouter:
         warnings: list[str] = []
         if any(source.source_type == SourceType.VIDEO and answers.video_source_treatment == "match visually" for source in sources):
             warnings.append("Video sources that must be closely matched should go through keyframe extraction before generation.")
+        if any(source.source_type == SourceType.VIDEO for source in sources) and answers.source_use == "copy closely":
+            warnings.append("Copying a video source closely requires keyframe extraction and rights review before generation.")
         if any(source.strategy == SourceReferenceStrategy.URL_EXTRACTION_NEEDED for source in sources):
             warnings.append("URL sources are stored but not scraped in this MVP, so important facts should be pasted manually.")
         combined_text = " ".join(
@@ -117,12 +120,21 @@ class ModelRouter:
             warnings.append("Human faces, historical accuracy, readable text, and complex continuity can require multiple AI video retries.")
         if answers.rights_constraints or answers.source_use == "copy closely":
             warnings.append("If licensing is uncertain, use sources as inspiration or factual context instead of direct reproduction.")
+        if answers.source_use == "copy closely" and not answers.rights_constraints:
+            warnings.append("Licensing status is unclear for close copying. Add rights notes before generation.")
+        route_text = f"{answers.output_format or ''} {answers.platform or ''}".lower()
+        if any(term in route_text for term in ["video", "reel", "story", "shorts", "tiktok"]):
+            if not resolve_duration_seconds(project, answers):
+                warnings.append("Video planning needs a resolved duration before generation.")
+            if not resolve_aspect_ratio(answers):
+                warnings.append("Video planning needs a resolved aspect ratio before generation.")
         if answers.maximum_cost_band and answers.maximum_cost_band in {"free/manual", "very low"} and answers.ai_video_acceptable:
             warnings.append("AI video may exceed a very low budget once retries are included.")
         return warnings or ["No major warnings identified for the planning stage."]
 
     def _build_rationale(
         self,
+        project: ContentProject,
         platform: str,
         budget_priority: str,
         output_format: str,
@@ -131,7 +143,11 @@ class ModelRouter:
         route: WorkflowRoute,
     ) -> list[str]:
         """Build rationale for the selected route."""
-        rationale = [f"Platform is {platform}, format is {output_format or 'not specified'}, and budget priority is {budget_priority}."]
+        resolved_duration = resolve_duration_seconds(project, answers)
+        resolved_aspect_ratio = resolve_aspect_ratio(answers)
+        rationale = [f"Platform is {platform}, format is {output_format or 'not specified'}, aspect ratio is {resolved_aspect_ratio}, and budget priority is {budget_priority}."]
+        if resolved_duration:
+            rationale.append(f"Resolved duration is {resolved_duration} seconds.")
         if route in {WorkflowRoute.STATIC_IMAGE_POST, WorkflowRoute.CAROUSEL_POST}:
             rationale.append("Static or carousel planning keeps production cost and iteration risk low.")
         if route == WorkflowRoute.STILL_IMAGE_WITH_MOTION_VIDEO:
@@ -144,6 +160,8 @@ class ModelRouter:
             rationale.append(f"{len(sources)} source reference(s) are available for planning.")
         if answers.include_captions_hashtags:
             rationale.append("Captions and hashtags are included in the deliverable scope.")
+        if answers.quality_level:
+            rationale.append(f"Quality target is {answers.quality_level}.")
         return rationale
 
     def _next_step_for_route(self, route: WorkflowRoute, sources: list[SourceRecord]) -> str:

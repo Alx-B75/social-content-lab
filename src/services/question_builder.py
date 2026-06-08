@@ -2,7 +2,7 @@
 
 from src.models.planning import Question, QuestionGroup
 from src.models.project import ContentProject
-from src.models.source import SourceRecord
+from src.models.source import SourceRecord, SourceType
 
 
 class QuestionBuilder:
@@ -37,9 +37,9 @@ class QuestionBuilder:
         return QuestionGroup(
             title="Platform and format",
             questions=[
-                Question(key="platform", prompt="Which platform is this for?", input_type="select", options=["LinkedIn", "Instagram", "TikTok", "YouTube Shorts", "Facebook", "X", "website", "multi-platform"]),
-                Question(key="aspect_ratio", prompt="Which aspect ratio should be used?", input_type="select", options=["16:9", "9:16", "1:1", "4:5", "multiple versions"]),
-                Question(key="output_format", prompt="What format should this be?", input_type="select", options=["static post", "carousel", "short video", "ad", "story", "reel", "long-form video"]),
+                Question(key="platform", prompt="Which platform is this for?", input_type="select", options=["LinkedIn", "Instagram feed", "Instagram Reels", "Instagram square", "TikTok", "YouTube Shorts", "YouTube standard", "Facebook", "X", "Website hero", "Stories", "multi-platform"]),
+                Question(key="output_format", prompt="What format should this be?", input_type="select", options=["static post", "carousel", "short video", "standard video", "ad", "story", "reel", "website hero", "long-form video"]),
+                Question(key="aspect_ratio_override", prompt="Optional aspect ratio override", input_type="select", options=["Use inferred default", "16:9", "9:16", "1:1", "4:5", "variants_required"]),
             ],
         )
 
@@ -71,12 +71,12 @@ class QuestionBuilder:
     def _source_use_group(self, sources: list[SourceRecord]) -> QuestionGroup:
         """Build source use questions."""
         video_question = "If using a video source, should it be matched visually, summarised, or converted into a new concept?"
-        if not any(source.source_type == "video" for source in sources):
+        if not any(source.source_type == SourceType.VIDEO for source in sources):
             video_question = "If a video source is added later, should it be matched visually, summarised, or converted into a new concept?"
         return QuestionGroup(
             title="Source use",
             questions=[
-                Question(key="source_use", prompt="Should the uploaded source be copied closely, used only as inspiration, or only used for factual/reference context?", input_type="select", options=["copy closely", "use as inspiration", "factual/reference context only"]),
+                Question(key="source_use", prompt="Should the uploaded source be copied closely, used as inspiration/reference context, or used only for factual context?", input_type="select", options=["inspiration/reference context", "copy closely", "factual/reference context only"]),
                 Question(key="rights_constraints", prompt="Are there rights or licensing constraints?", input_type="text_area"),
                 Question(key="sensitive_materials", prompt="Are there people, logos, private details, or copyrighted materials that should not be reproduced?", input_type="text_area"),
                 Question(key="video_source_treatment", prompt=video_question, input_type="select", options=["match visually", "summarise", "convert into a new concept", "not applicable"]),
@@ -89,6 +89,7 @@ class QuestionBuilder:
             title="Budget and quality",
             questions=[
                 Question(key="budget_priority", prompt="Is the priority cheapest, fastest, highest quality, or best balance?", input_type="select", options=["cheapest", "fastest", "highest quality", "best balance"]),
+                Question(key="quality_level", prompt="What quality level is expected for this pass?", input_type="select", options=["good enough draft", "polished draft", "client-ready", "highest quality"]),
                 Question(key="ai_video_acceptable", prompt="Is AI video generation acceptable?", input_type="checkbox"),
                 Question(key="draft_variations", prompt="How many draft variations should be generated before final selection?", input_type="number"),
                 Question(key="maximum_cost_band", prompt="What is the maximum acceptable estimated cost?", input_type="select", options=["free/manual", "very low", "low", "medium", "high", "unknown"]),
