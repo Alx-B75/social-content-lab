@@ -6,6 +6,7 @@ import streamlit as st
 
 from src.models.project import ContentProject
 from src.models.source import FrameRecord, FrameRole, SourceRecord, SourceType
+from src.services.frame_summary import selected_frame_count
 from src.services.source_analyser import SourceAnalyser
 from src.services.video_frame_extractor import (
     build_frame_index,
@@ -219,25 +220,57 @@ def _render_frame_selection(
 ) -> None:
     """Render frame thumbnails and selection controls."""
     role_options = [role.value for role in FrameRole]
-    with st.expander(f"Select frames for {source.source_id}", expanded=True):
-        with st.form(f"frame_selection_{source.source_id}"):
-            updated_frames: list[FrameRecord] = []
-            for index, frame in enumerate(frames):
+    preset_options = ["No fast fill", "Use as opening hero", "Use as background", "Needs review", "Do not use"]
+    st.markdown(f"**Select and describe frames for {source.source_id}**")
+    with st.form(f"frame_selection_{source.source_id}"):
+        updated_frames: list[FrameRecord] = []
+        for index, frame in enumerate(frames):
+            with st.expander(_frame_caption(frame), expanded=index == 0):
                 columns = st.columns([1, 2])
                 if frame.absolute_path.exists():
                     columns[0].image(str(frame.absolute_path), caption=_frame_caption(frame), use_container_width=True)
                 else:
                     columns[0].warning("Frame file missing.")
                 selected_index = role_options.index(frame.selected_role.value) if frame.selected_role.value in role_options else 0
+                preset = columns[1].selectbox("Fast fill on save", preset_options, key=f"preset_{source.source_id}_{frame.frame_id}")
                 role_value = columns[1].selectbox("Role", role_options, index=selected_index, key=f"role_{source.source_id}_{frame.frame_id}")
                 notes = columns[1].text_input("Notes", value=frame.notes, key=f"notes_{source.source_id}_{frame.frame_id}")
-                updated_frames.append(frame.model_copy(update={"selected_role": FrameRole(role_value), "notes": notes}))
-            submitted = st.form_submit_button("Save frame selections")
-        if submitted:
-            save_frame_index(source.source_id, source.frame_index_path, updated_frames)
-            source.selected_frame_count = _selected_frame_count(updated_frames)
-            _persist_video_frame_state(source_analyser, project, sources)
-            st.success("Frame selections saved.")
+                description = st.text_area("What is visible?", value=frame.description, height=85, key=f"description_{source.source_id}_{frame.frame_id}")
+                detail_columns = st.columns(2)
+                visible_subject = detail_columns[0].text_input("Main subject", value=frame.visible_subject, key=f"subject_{source.source_id}_{frame.frame_id}")
+                setting = detail_columns[1].text_input("Setting/background", value=frame.setting, key=f"setting_{source.source_id}_{frame.frame_id}")
+                mood = detail_columns[0].text_input("Mood/tone", value=frame.mood, key=f"mood_{source.source_id}_{frame.frame_id}")
+                visual_style = detail_columns[1].text_input("Visual style", value=frame.visual_style, key=f"style_{source.source_id}_{frame.frame_id}")
+                on_screen_text = st.text_input("On-screen text, if any", value=frame.on_screen_text, key=f"text_{source.source_id}_{frame.frame_id}")
+                rights_notes = st.text_input("Rights/licensing note", value=frame.rights_notes, key=f"rights_{source.source_id}_{frame.frame_id}")
+                historical_or_brand_risk = st.text_input("Historical or brand risk", value=frame.historical_or_brand_risk, key=f"risk_{source.source_id}_{frame.frame_id}")
+                recommended_use = st.text_input("Recommended use", value=frame.recommended_use, key=f"use_{source.source_id}_{frame.frame_id}")
+                avoid_using_for = st.text_input("Avoid using this frame for", value=frame.avoid_using_for, key=f"avoid_{source.source_id}_{frame.frame_id}")
+                updated_frame = frame.model_copy(
+                    update={
+                        "selected_role": FrameRole(role_value),
+                        "notes": notes,
+                        "description": description,
+                        "visible_subject": visible_subject,
+                        "setting": setting,
+                        "mood": mood,
+                        "visual_style": visual_style,
+                        "on_screen_text": on_screen_text,
+                        "rights_notes": rights_notes,
+                        "historical_or_brand_risk": historical_or_brand_risk,
+                        "recommended_use": recommended_use,
+                        "avoid_using_for": avoid_using_for,
+                    }
+                )
+                updated_frames.append(_apply_frame_preset(updated_frame, preset))
+        submitted = st.form_submit_button("Save frame selections")
+    if submitted:
+        save_frame_index(source.source_id, source.frame_index_path, updated_frames)
+        for frame in updated_frames:
+            source_analyser.project_service.append_frame_to_asset_log(project, frame)
+        source.selected_frame_count = selected_frame_count(updated_frames)
+        _persist_video_frame_state(source_analyser, project, sources)
+        st.success("Frame selections saved.")
 
 
 def _video_metadata_text(source: SourceRecord) -> str:
@@ -278,12 +311,26 @@ def _update_source_frame_status(
         source.notes.append(note)
 
 
+def _apply_frame_preset(frame: FrameRecord, preset: str) -> FrameRecord:
+    """Apply a local frame-description preset selected by the user."""
+    if preset == "Use as opening hero":
+        return frame.model_copy(update={"selected_role": FrameRole.HERO_FRAME, "recommended_use": "opening visual reference"})
+    if preset == "Use as background":
+        return frame.model_copy(update={"selected_role": FrameRole.POSSIBLE_BACKGROUND, "recommended_use": "background texture or atmosphere"})
+    if preset == "Needs review":
+        return frame.model_copy(update={"selected_role": FrameRole.NEEDS_REVIEW, "historical_or_brand_risk": "needs review before generation"})
+    if preset == "Do not use":
+        return frame.model_copy(
+            update={
+                "selected_role": FrameRole.DO_NOT_USE,
+                "recommended_use": "do not use",
+                "avoid_using_for": "generation or publication",
+            }
+        )
+    return frame
+
+
 def _persist_video_frame_state(source_analyser: SourceAnalyser, project: ContentProject, sources: list[SourceRecord]) -> None:
     """Persist source metadata after frame extraction or selection."""
     source_analyser.project_service.save_source_index(project, sources)
     source_analyser.project_service.save_project(project, sources, st.session_state.get("content_pack"), st.session_state.get("answers"))
-
-
-def _selected_frame_count(frames: list[FrameRecord]) -> int:
-    """Count frames selected for production use."""
-    return sum(1 for frame in frames if frame.selected_role not in {FrameRole.UNSELECTED, FrameRole.DO_NOT_USE})

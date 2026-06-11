@@ -40,9 +40,15 @@ ffprobe -version
 
 If FFmpeg is unavailable, the app remains usable. Video uploads are still saved and indexed, but frame extraction is disabled until FFmpeg is installed and available on PATH.
 
+## Manual Frame Descriptions
+
+Extracted video frames can be assigned roles such as hero frame, visual reference, possible background, needs review, do not use, or unselected. The app lets you add manual structured descriptions for selected frames, including visible subject, setting, mood, visual style, on-screen text, rights notes, risk notes, recommended use, and avoid-use guidance.
+
+Those manual descriptions feed into the deterministic content pack, shot list, image prompt, video prompt, risk notes, and selected-frame preview. No AI vision analysis is implemented yet; the frame interpretation comes only from local metadata and user-entered descriptions.
+
 ## What Is Not Implemented Yet
 
-The app does not perform paid media generation, live model calls, URL scraping, vision analysis, full video parsing, audio transcription, OCR, authentication, database storage, deployment, or platform publishing.
+The app does not perform paid media generation, live model calls, URL scraping, AI vision analysis, full video parsing, audio transcription, OCR, authentication, database storage, deployment, or platform publishing.
 
 ## Future Roadmap
 

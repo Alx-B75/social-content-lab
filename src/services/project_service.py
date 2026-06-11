@@ -11,6 +11,7 @@ from src.models.planning import ClarifyingAnswers, ContentPack
 from src.models.project import ContentProject, ProjectCreate
 from src.models.source import FrameRecord, SourceRecord
 from src.services.file_utils import ensure_directory, read_text_file, timestamped_project_id, write_text_file
+from src.services.frame_summary import frame_asset_log_keep_reject, frame_asset_log_notes
 
 
 class ProjectService:
@@ -149,13 +150,20 @@ class ProjectService:
         self._write_asset_log_rows(asset_log_path, rows)
 
     def append_frame_to_asset_log(self, project: ContentProject, frame: FrameRecord) -> None:
-        """Append a frame row to asset-log.csv without duplicating asset IDs."""
+        """Append or update a frame row in asset-log.csv without duplicating asset IDs."""
         self.ensure_asset_log(project)
         asset_log_path = project.project_path / "asset-log.csv"
         rows = self._read_asset_log_rows(asset_log_path)
-        if any(row.get("asset_id") == frame.frame_id for row in rows):
-            return
-        rows.append(self._frame_asset_log_row(project, frame))
+        frame_row = self._frame_asset_log_row(project, frame)
+        updated = False
+        for row in rows:
+            if row.get("asset_id") != frame.frame_id:
+                continue
+            row.update(frame_row)
+            updated = True
+            break
+        if not updated:
+            rows.append(frame_row)
         self._write_asset_log_rows(asset_log_path, rows)
 
     def save_uploaded_file(self, project: ContentProject, filename: str, data: bytes) -> Path:
@@ -383,6 +391,10 @@ class ProjectService:
     def _frame_asset_log_row(self, project: ContentProject, frame: FrameRecord) -> dict[str, str]:
         """Build an asset log row for an extracted frame."""
         timestamp = f"{frame.timestamp_seconds:.2f}s" if frame.timestamp_seconds is not None else "unknown timestamp"
+        structured_notes = frame_asset_log_notes(frame)
+        notes = f"extracted from video source at {timestamp}"
+        if structured_notes:
+            notes = f"{notes}; {structured_notes}"
         return {
             "asset_id": frame.frame_id,
             "project_id": project.project_id,
@@ -392,7 +404,7 @@ class ProjectService:
             "estimated_cost_band": "free/manual",
             "time_spent_minutes": "",
             "rating": "unrated",
-            "historical_or_brand_risk": "needs_review",
-            "keep_reject": "undecided",
-            "notes": f"extracted from video source at {timestamp}",
+            "historical_or_brand_risk": frame.historical_or_brand_risk or "needs_review",
+            "keep_reject": frame_asset_log_keep_reject(frame),
+            "notes": notes,
         }

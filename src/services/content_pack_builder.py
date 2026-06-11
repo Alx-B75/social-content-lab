@@ -3,9 +3,9 @@
 from src.models.planning import ClarifyingAnswers, ContentPack, WorkflowRecommendation
 from src.models.project import ContentProject
 from src.models.source import FrameRecord, FrameRole, SourceRecord, SourceReferenceStrategy, SourceType
+from src.services.frame_summary import frame_prompt_detail, frame_risk_notes, load_frame_references, positive_frame_references
 from src.services.planning_defaults import label_for_route, resolve_aspect_ratio, resolve_call_to_action, resolve_duration_seconds
 from src.services.project_service import ProjectService
-from src.services.video_frame_extractor import load_frame_index
 
 
 class ContentPackBuilder:
@@ -31,11 +31,13 @@ class ContentPackBuilder:
         call_to_action = resolve_call_to_action(project, answers)
         resolved_duration = resolve_duration_seconds(project, answers)
         resolved_aspect_ratio = resolve_aspect_ratio(answers)
-        selected_frames = self._selected_frames(sources)
+        frame_references = load_frame_references(sources)
+        selected_frames = positive_frame_references(frame_references)
         extracted_frame_warning = self._extracted_frame_warning(sources, selected_frames)
         risk_notes = list(recommendation.warnings)
         if extracted_frame_warning:
             risk_notes.append(extracted_frame_warning)
+        risk_notes.extend(frame_risk_notes(frame_references))
 
         content_pack = ContentPack(
             core_message=core_message,
@@ -55,7 +57,7 @@ class ContentPackBuilder:
                 recommendation.suggested_next_step,
                 "Review rights and source-use constraints before generating or publishing assets.",
                 "Update asset-log.csv as source and generated assets are selected.",
-                *self._frame_next_actions(sources, selected_frames),
+                *self._frame_next_actions(sources, selected_frames, frame_references),
             ],
         )
         self.project_service.save_content_pack(project, sources, content_pack, answers)
@@ -91,9 +93,9 @@ class ContentPackBuilder:
         if resolved_duration:
             segments = self._timeline_segments(resolved_duration)
             return [
-                f"{segments[0]}: Lead with the strongest moment from '{project.working_title}' and make the promise clear: {core_message}.{frame_context}",
+                f"{segments[0]}: Lead with the strongest approved visual from '{project.working_title}' and make the promise clear: {core_message}.{frame_context}",
                 f"{segments[1]}: Deliver the core value for {answers.platform or 'the chosen platform'} in a {answers.tone or 'clear'} tone. {topic_line}",
-                f"{segments[2]}: Show proof, a teaser, or the most useful feature moment without inventing unsupported source details.",
+                f"{segments[2]}: Build on the selected visual references or confirmed source details without inventing unsupported claims.",
                 f"{segments[3]}: End with the CTA: {call_to_action}",
             ]
         return [
@@ -173,7 +175,7 @@ class ContentPackBuilder:
         if any(source.source_type.value == "video" for source in sources):
             checklist.extend(["Video keyframes", "Duration and aspect ratio", "Transcript or captions if available"])
         if selected_frames:
-            checklist.extend([f"Selected frame: {frame.file_name} ({frame.selected_role.value})" for frame in selected_frames])
+            checklist.extend([f"Selected frame: {frame.file_name} ({frame.selected_role.value}) - {frame.recommended_use or 'manual reference'}" for frame in selected_frames])
         if answers.include_voiceover:
             checklist.append("Voiceover script and preferred voice direction")
         if answers.editing_destination and answers.editing_destination != "not needed":
@@ -196,14 +198,14 @@ class ContentPackBuilder:
             segments = self._timeline_segments(resolved_duration)
             return [
                 f"{segments[0]}: {strongest_visual}; introduce {core_message}.",
-                f"{segments[1]}: show the core value/message with concise on-screen text for {answers.platform or 'the target platform'}.",
-                f"{segments[2]}: show proof, teaser, feature, or source-backed supporting moment.",
+                f"{segments[1]}: {self._middle_visual_instruction(selected_frames)} with concise on-screen text for {answers.platform or 'the target platform'}.",
+                f"{segments[2]}: use confirmed source details and selected reference descriptions to support the message.",
                 f"{segments[3]}: end card with CTA: {call_to_action}",
             ]
         return [
             f"Frame 1: {strongest_visual}; headline the message '{core_message}'.",
-            "Frame 2: show the key context or benefit using only confirmed source details.",
-            "Frame 3: add proof, feature, or teaser copy that can be manually checked.",
+            f"Frame 2: {self._middle_visual_instruction(selected_frames)} using only confirmed source details.",
+            "Frame 3: add source-backed supporting copy that can be manually checked.",
             f"Frame 4: CTA/end card: {call_to_action}",
         ]
 
@@ -244,20 +246,6 @@ class ContentPackBuilder:
         """Clean punctuation from a sentence fragment before appending punctuation."""
         return value.strip().rstrip(".!?")
 
-    def _selected_frames(self, sources: list[SourceRecord]) -> list[FrameRecord]:
-        """Return selected production frames across video sources."""
-        selected_frames: list[FrameRecord] = []
-        for source in sources:
-            if source.source_type != SourceType.VIDEO:
-                continue
-            frames = load_frame_index(source.frame_index_path)
-            selected_frames.extend(
-                frame
-                for frame in frames
-                if frame.selected_role not in {FrameRole.UNSELECTED, FrameRole.DO_NOT_USE}
-            )
-        return selected_frames
-
     def _extracted_frame_warning(self, sources: list[SourceRecord], selected_frames: list[FrameRecord]) -> str | None:
         """Return a warning when frames exist but none are selected."""
         if selected_frames:
@@ -270,34 +258,55 @@ class ContentPackBuilder:
         """Return a short script context sentence for selected frames."""
         hero_frame = next((frame for frame in selected_frames if frame.selected_role == FrameRole.HERO_FRAME), None)
         if hero_frame:
-            return f" Use selected hero frame `{hero_frame.file_name}` as the opening visual reference."
+            return f" Open with `{hero_frame.file_name}` ({hero_frame.label}), described as: {frame_prompt_detail(hero_frame)}."
         if selected_frames:
             frame = selected_frames[0]
-            return f" Use selected frame `{frame.file_name}` as a {frame.selected_role.value.replace('_', ' ')}."
+            return f" Use `{frame.file_name}` as a {frame.selected_role.value.replace('_', ' ')}: {frame_prompt_detail(frame)}."
         return ""
 
     def _selected_frame_prompt(self, selected_frames: list[FrameRecord]) -> str:
         """Return prompt guidance for selected frames."""
         if not selected_frames:
             return ""
-        frame_lines = [f"`{frame.file_name}` as {frame.selected_role.value.replace('_', ' ')}" for frame in selected_frames]
-        return "Use selected extracted frames: " + "; ".join(frame_lines) + "."
+        hero_frames = [frame for frame in selected_frames if frame.selected_role == FrameRole.HERO_FRAME]
+        visual_frames = [frame for frame in selected_frames if frame.selected_role == FrameRole.VISUAL_REFERENCE]
+        background_frames = [frame for frame in selected_frames if frame.selected_role == FrameRole.POSSIBLE_BACKGROUND]
+        lines = []
+        for frame in hero_frames:
+            lines.append(f"Open with `{frame.file_name}` ({frame.label}), described as: {frame_prompt_detail(frame)}. Use this as an opening visual reference, not as a direct copy unless rights are cleared.")
+        for frame in visual_frames:
+            lines.append(f"Use `{frame.file_name}` ({frame.label}) as a middle visual reference: {frame_prompt_detail(frame)}.")
+        for frame in background_frames:
+            lines.append(f"Use `{frame.file_name}` ({frame.label}) only as background or atmosphere reference: {frame_prompt_detail(frame)}.")
+        return " ".join(lines)
+
+    def _middle_visual_instruction(self, selected_frames: list[FrameRecord]) -> str:
+        """Return middle-shot guidance based on selected visual reference frames."""
+        visual_frame = next((frame for frame in selected_frames if frame.selected_role == FrameRole.VISUAL_REFERENCE), None)
+        if visual_frame:
+            return f"use `{visual_frame.file_name}` as the mid-sequence visual reference: {frame_prompt_detail(visual_frame)}"
+        background_frame = next((frame for frame in selected_frames if frame.selected_role == FrameRole.POSSIBLE_BACKGROUND), None)
+        if background_frame:
+            return f"use `{background_frame.file_name}` for background atmosphere, not primary composition"
+        return "show the core value/message"
 
     def _opening_visual_instruction(self, selected_frames: list[FrameRecord], keyframe_needed: bool) -> str:
         """Return opening visual guidance using selected frames when available."""
         hero_frame = next((frame for frame in selected_frames if frame.selected_role == FrameRole.HERO_FRAME), None)
         if hero_frame:
-            return f"use selected hero frame `{hero_frame.file_name}` as the opening visual reference"
+            return f"use selected hero frame `{hero_frame.file_name}` as the opening visual reference: {frame_prompt_detail(hero_frame)}"
         if selected_frames:
-            return f"use selected frame `{selected_frames[0].file_name}` as the first approved visual reference"
+            return f"use selected frame `{selected_frames[0].file_name}` as the first approved visual reference: {frame_prompt_detail(selected_frames[0])}"
         if keyframe_needed:
             return "choose strongest extracted keyframe"
         return "use the strongest approved visual reference or title frame"
 
-    def _frame_next_actions(self, sources: list[SourceRecord], selected_frames: list[FrameRecord]) -> list[str]:
+    def _frame_next_actions(self, sources: list[SourceRecord], selected_frames: list[FrameRecord], frame_references: list[FrameRecord]) -> list[str]:
         """Return frame-related next actions."""
         if selected_frames:
             return ["Confirm selected frame rights before using them as direct visual references."]
+        if any(frame.selected_role == FrameRole.NEEDS_REVIEW for frame in frame_references):
+            return ["Review selected frame descriptions before using them in generation prompts."]
         if any(source.frame_count > 0 for source in sources if source.source_type == SourceType.VIDEO):
             return ["Select hero/reference frames from the extracted frame grid."]
         if any(source.source_type == SourceType.VIDEO for source in sources):

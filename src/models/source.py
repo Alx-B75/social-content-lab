@@ -53,6 +53,16 @@ class FrameRecord(BaseModel):
     label: str
     selected_role: FrameRole = FrameRole.UNSELECTED
     notes: str = ""
+    description: str = ""
+    visible_subject: str = ""
+    setting: str = ""
+    mood: str = ""
+    visual_style: str = ""
+    on_screen_text: str = ""
+    rights_notes: str = ""
+    historical_or_brand_risk: str = ""
+    recommended_use: str = ""
+    avoid_using_for: str = ""
 
 
 class SourceRecord(BaseModel):

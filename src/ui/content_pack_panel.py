@@ -6,8 +6,9 @@ import streamlit as st
 
 from src.models.planning import ClarifyingAnswers, ContentPack, WorkflowRecommendation
 from src.models.project import ContentProject
-from src.models.source import SourceRecord
+from src.models.source import FrameRecord, FrameRole, SourceRecord
 from src.services.content_pack_builder import ContentPackBuilder
+from src.services.frame_summary import grouped_frame_references, load_frame_references
 from src.services.planning_defaults import normalize_clarifying_answers
 
 
@@ -40,7 +41,7 @@ def render_content_pack_panel(
         return None
 
     current_pack = _render_amend_pack_form(content_pack_builder, project, sources, current_pack)
-    _render_pack_preview(current_pack)
+    _render_pack_preview(current_pack, sources)
     st.header("6. Save/export files")
     st.success("Files are saved locally in the project folder.")
     st.code(str(project.project_path))
@@ -101,9 +102,10 @@ def _render_amend_pack_form(
         return amended_pack
 
 
-def _render_pack_preview(content_pack: ContentPack) -> None:
+def _render_pack_preview(content_pack: ContentPack, sources: list[SourceRecord]) -> None:
     """Render a readable preview of the generated content pack."""
     _render_overview_block(content_pack)
+    _render_selected_frame_references(sources)
     _render_list_block("Script outline", content_pack.script_outline)
     _render_list_block("Shot list", content_pack.shot_list)
     with st.expander("Image prompt", expanded=True):
@@ -156,6 +158,63 @@ def _render_overview_block(content_pack: ContentPack) -> None:
             "</div>",
             unsafe_allow_html=True,
         )
+
+
+def _render_selected_frame_references(sources: list[SourceRecord]) -> None:
+    """Render selected frame references grouped by role."""
+    frames = load_frame_references(sources)
+    if not frames:
+        return
+    st.subheader("Selected frame references")
+    grouped = grouped_frame_references(frames)
+    role_order = [
+        (FrameRole.HERO_FRAME, "Hero frame"),
+        (FrameRole.VISUAL_REFERENCE, "Visual references"),
+        (FrameRole.POSSIBLE_BACKGROUND, "Backgrounds"),
+        (FrameRole.NEEDS_REVIEW, "Needs review"),
+        (FrameRole.DO_NOT_USE, "Do not use"),
+    ]
+    for role, label in role_order:
+        role_frames = grouped.get(role, [])
+        if not role_frames:
+            continue
+        st.markdown(f"**{label}**")
+        for frame in role_frames:
+            _render_frame_reference(frame)
+
+
+def _render_frame_reference(frame: FrameRecord) -> None:
+    """Render one selected frame reference with available description metadata."""
+    columns = st.columns([1, 2])
+    if frame.absolute_path.exists():
+        columns[0].image(str(frame.absolute_path), caption=frame.file_name, use_container_width=True)
+    else:
+        columns[0].write(frame.file_name)
+    details = [
+        ("Role", frame.selected_role.value.replace("_", " ")),
+        ("Timestamp", _frame_timestamp(frame)),
+        ("Description", frame.description),
+        ("Subject", frame.visible_subject),
+        ("Setting", frame.setting),
+        ("Mood", frame.mood),
+        ("Style", frame.visual_style),
+        ("On-screen text", frame.on_screen_text),
+        ("Recommended use", frame.recommended_use),
+        ("Rights", frame.rights_notes),
+        ("Risk", frame.historical_or_brand_risk),
+        ("Avoid", frame.avoid_using_for),
+    ]
+    for label, value in details:
+        if value:
+            columns[1].markdown(f"**{label}:** {value}")
+    with st.expander(f"Raw metadata for {frame.file_name}", expanded=False):
+        st.json(frame.model_dump(mode="json"))
+
+
+def _frame_timestamp(frame: FrameRecord) -> str:
+    """Return a display timestamp for a selected frame."""
+    timestamp = f"{frame.timestamp_seconds:.2f}s" if frame.timestamp_seconds is not None else "unknown"
+    return f"{frame.label} at {timestamp}"
 
 
 def _render_list_block(title: str, items: list[str]) -> None:

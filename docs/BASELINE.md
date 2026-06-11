@@ -44,6 +44,8 @@ requirements.txt        Python dependencies
 - Records video metadata and future extraction needs without parsing video content.
 - Extracts local video reference frames when FFmpeg and ffprobe are available on PATH.
 - Lets selected video frames be marked as hero frames, visual references, possible backgrounds, needs review, do not use, or unselected.
+- Lets selected video frames be manually described with subject, setting, mood, visual style, on-screen text, rights notes, risk notes, recommended use, and avoid-use guidance.
+- Feeds selected frame roles and manual descriptions into deterministic shot lists, prompt packs, risk notes, and content pack previews.
 - Stores URL and manual-description source metadata without scraping.
 - Summarises pasted text with a local preview, word count, and likely use-case heuristic.
 - Presents grouped clarifying questions in the requested planning categories.
@@ -58,6 +60,7 @@ requirements.txt        Python dependencies
 - fal.ai or Replicate integration
 - URL scraping
 - Vision model analysis
+- AI vision interpretation of extracted frames
 - Full video parsing
 - Audio transcription
 - OCR for visible text
@@ -103,7 +106,7 @@ If FFmpeg is unavailable, the app still runs and stores video sources, but frame
 - Branch: `main`
 - Baseline initial commit: `3abda8e Initial standalone Streamlit social content lab scaffold`
 - Remote configured as `origin`: `https://github.com/Alx-B75/social-content-lab.git`
-- No push has been performed by Codex.
+- `main` has been pushed to `origin`.
 
 ## Important Constraints
 
@@ -113,6 +116,7 @@ If FFmpeg is unavailable, the app still runs and stores video sources, but frame
 - API keys must stay in `.env` or Streamlit secrets and must never be committed.
 - Generated content and uploaded media under `content/` should remain ignored except `content/.gitkeep`.
 - Code should remain simple and local-first.
+- Selected frame interpretation must remain manual until an explicit future AI vision step is added.
 - Python functions, classes, and modules should keep full docstrings.
 - No inline comments unless there is a strong reason.
 
@@ -122,7 +126,7 @@ If FFmpeg is unavailable, the app still runs and stores video sources, but frame
 2. Add a project loader so existing local projects can be reopened from `content/`.
 3. Add safer file-size checks and extension validation for uploads.
 4. Improve source summaries for pasted text and manual descriptions while staying local-only.
-5. Add optional keyframe extraction behind a clearly local tool path.
-6. Add a simple asset scoring workflow in `asset-log.csv`.
-7. Add export-oriented views for CapCut, Canva, Premiere, and DaVinci Resolve handoff.
+5. Add a simple asset scoring workflow in `asset-log.csv`.
+6. Add export-oriented views for CapCut, Canva, Premiere, and DaVinci Resolve handoff.
+7. Add optional OCR or transcription as local-first tools if needed.
 8. Prepare future OpenRouter and media-provider integrations behind explicit user-triggered actions and rough cost warnings.

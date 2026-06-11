@@ -9,6 +9,8 @@ from math import gcd
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from src.models.source import FrameRecord
 from src.services.file_utils import ensure_directory, write_text_file
 
@@ -126,7 +128,15 @@ def load_frame_index(frame_index_path: Path | None) -> list[FrameRecord]:
     except (OSError, json.JSONDecodeError):
         return []
     frames = payload.get("frames") if isinstance(payload, dict) else []
-    return [FrameRecord(**frame) for frame in frames if isinstance(frame, dict)]
+    loaded_frames: list[FrameRecord] = []
+    for frame in frames:
+        if not isinstance(frame, dict):
+            continue
+        try:
+            loaded_frames.append(FrameRecord(**frame))
+        except ValidationError:
+            continue
+    return loaded_frames
 
 
 def save_frame_index(source_id: str, frame_index_path: Path, frames: list[FrameRecord]) -> None:
