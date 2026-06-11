@@ -30,6 +30,31 @@ class SourceReferenceStrategy(StrEnum):
     MANUAL_DESCRIPTION_NEEDED = "manual_description_needed"
 
 
+class FrameRole(StrEnum):
+    """Supported roles for extracted video frames."""
+
+    UNSELECTED = "unselected"
+    HERO_FRAME = "hero_frame"
+    VISUAL_REFERENCE = "visual_reference"
+    DO_NOT_USE = "do_not_use"
+    POSSIBLE_BACKGROUND = "possible_background"
+    NEEDS_REVIEW = "needs_review"
+
+
+class FrameRecord(BaseModel):
+    """Metadata for an extracted video frame."""
+
+    frame_id: str
+    source_id: str
+    file_name: str
+    relative_path: Path
+    absolute_path: Path
+    timestamp_seconds: float | None = None
+    label: str
+    selected_role: FrameRole = FrameRole.UNSELECTED
+    notes: str = ""
+
+
 class SourceRecord(BaseModel):
     """Metadata for a source saved in a local project."""
 
@@ -41,6 +66,7 @@ class SourceRecord(BaseModel):
     mime_type: str | None = None
     file_size_bytes: int | None = None
     duration_seconds: float | None = None
+    frame_rate: float | None = None
     width: int | None = None
     height: int | None = None
     aspect_ratio: str | None = None
@@ -50,6 +76,10 @@ class SourceRecord(BaseModel):
     likely_use_case: str | None = None
     manual_description: str | None = None
     strategy: SourceReferenceStrategy
+    frame_extraction_status: str = "not_started"
+    frame_count: int = 0
+    frame_index_path: Path | None = None
+    selected_frame_count: int = 0
     notes: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=datetime.now)
     extra: dict[str, Any] = Field(default_factory=dict)

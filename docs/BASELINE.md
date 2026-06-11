@@ -11,6 +11,7 @@ Social Content Lab is a standalone, local-first Streamlit MVP for planning AI-as
 - Pydantic
 - python-dotenv
 - Pillow for basic image metadata
+- Optional FFmpeg and ffprobe for local video metadata and frame extraction
 - Local filesystem storage
 - No database
 - No authentication
@@ -41,6 +42,8 @@ requirements.txt        Python dependencies
 - Saves uploaded files and pasted text under each project's `sources/` folder.
 - Uses Pillow for basic image metadata: filename, MIME type, file size, width, height, and aspect ratio.
 - Records video metadata and future extraction needs without parsing video content.
+- Extracts local video reference frames when FFmpeg and ffprobe are available on PATH.
+- Lets selected video frames be marked as hero frames, visual references, possible backgrounds, needs review, do not use, or unselected.
 - Stores URL and manual-description source metadata without scraping.
 - Summarises pasted text with a local preview, word count, and likely use-case heuristic.
 - Presents grouped clarifying questions in the requested planning categories.
@@ -56,7 +59,6 @@ requirements.txt        Python dependencies
 - URL scraping
 - Vision model analysis
 - Full video parsing
-- Video keyframe extraction
 - Audio transcription
 - OCR for visible text
 - Cost ledger or actual price tracking
@@ -84,6 +86,17 @@ Expected local URL:
 ```text
 http://localhost:8501
 ```
+
+## Optional FFmpeg Checks
+
+FFmpeg is optional. To enable local video metadata and keyframe extraction, install FFmpeg and confirm these commands work in Windows PowerShell:
+
+```powershell
+ffmpeg -version
+ffprobe -version
+```
+
+If FFmpeg is unavailable, the app still runs and stores video sources, but frame extraction controls show a clear warning.
 
 ## Current Git State
 

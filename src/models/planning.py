@@ -111,6 +111,7 @@ class ContentPack(BaseModel):
     recommended_format: str
     resolved_aspect_ratio: str | None = None
     resolved_duration_seconds: int | None = None
+    resolved_call_to_action: str | None = None
     script_outline: list[str]
     shot_list: list[str]
     image_prompt: str

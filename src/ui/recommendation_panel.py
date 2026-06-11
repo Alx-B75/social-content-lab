@@ -1,5 +1,7 @@
 """Recommendation panel for Social Content Lab."""
 
+import html
+
 import streamlit as st
 
 from src.models.planning import ClarifyingAnswers, WorkflowRecommendation
@@ -34,26 +36,58 @@ def render_recommendation_panel(
         st.info("Save clarifying answers, then generate a recommendation.")
         return None
 
-    columns = st.columns(4)
-    columns[0].metric("Route", label_for_route(recommendation.recommended_workflow_route))
-    columns[1].metric("Provider", label_for_provider(recommendation.suggested_provider_type))
-    columns[2].metric("Cost band", recommendation.estimated_cost_band.value)
-    columns[3].metric("Model category", recommendation.recommended_model_category)
     resolved_duration = resolve_duration_seconds(project, answers)
     resolved_aspect_ratio = resolve_aspect_ratio(answers)
+    st.subheader("Recommendation summary")
+    summary_items = [
+        ("Route", label_for_route(recommendation.recommended_workflow_route)),
+        ("Provider", label_for_provider(recommendation.suggested_provider_type)),
+        ("Cost band", recommendation.estimated_cost_band.value),
+        ("Model category", recommendation.recommended_model_category),
+        ("Resolved platform", answers.platform or "Not resolved yet"),
+        ("Resolved aspect ratio", resolved_aspect_ratio or "Not resolved yet"),
+        ("Resolved duration", f"{resolved_duration} seconds" if resolved_duration else "Not applicable"),
+    ]
+    _render_summary_grid(summary_items)
+    display_warnings = list(recommendation.warnings)
     if is_video_format(recommendation.recommended_workflow_route) and (not resolved_duration or not resolved_aspect_ratio):
-        st.warning("Video generation is recommended, but duration or aspect ratio is not fully resolved.")
+        display_warnings.append("Video generation is recommended, but duration or aspect ratio is not fully resolved.")
     if answers.source_use == "copy closely" and not answers.rights_constraints:
-        st.warning("Source use is set to copy closely, but licensing status is unclear.")
+        display_warnings.append("Source use is set to copy closely, but licensing status is unclear.")
 
     st.subheader("Rationale")
     for item in recommendation.rationale:
         st.write(f"- {item}")
 
-    st.subheader("Warnings")
-    for warning in recommendation.warnings:
-        st.warning(warning)
+    _render_warning_cards(display_warnings)
 
     st.subheader("Suggested next step")
     st.write(recommendation.suggested_next_step)
     return recommendation
+
+
+def _render_summary_grid(items: list[tuple[str, str]]) -> None:
+    """Render recommendation values in wrapping cards."""
+    columns = st.columns(2)
+    for index, item in enumerate(items):
+        label, value = item
+        columns[index % 2].markdown(_summary_card(label, value), unsafe_allow_html=True)
+
+
+def _summary_card(label: str, value: str) -> str:
+    """Build a small HTML recommendation card."""
+    return (
+        "<div class='scl-card'>"
+        f"<span class='scl-card-label'>{html.escape(label)}</span>"
+        f"<span class='scl-card-value'>{html.escape(value)}</span>"
+        "</div>"
+    )
+
+
+def _render_warning_cards(warnings: list[str]) -> None:
+    """Render warnings as compact readable cards."""
+    if not warnings:
+        return
+    st.subheader("Warnings")
+    for warning in warnings:
+        st.markdown(f"<div class='scl-card'><span class='scl-card-value'>{html.escape(warning)}</span></div>", unsafe_allow_html=True)

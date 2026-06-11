@@ -1,9 +1,6 @@
 """Local source analysis service for Social Content Lab."""
 
 import mimetypes
-import json
-import shutil
-import subprocess
 import uuid
 from pathlib import Path
 
@@ -12,6 +9,7 @@ from PIL import Image, UnidentifiedImageError
 from src.models.project import ContentProject
 from src.models.source import SourceRecord, SourceReferenceStrategy, SourceType
 from src.services.project_service import ProjectService
+from src.services.video_frame_extractor import extract_video_metadata
 
 
 class SourceAnalyser:
@@ -67,7 +65,7 @@ class SourceAnalyser:
     ) -> SourceRecord:
         """Save an uploaded video source and record future extraction needs."""
         stored_path = self.project_service.save_uploaded_file(project, filename, data)
-        metadata = self._read_video_metadata(stored_path)
+        metadata = extract_video_metadata(stored_path)
         notes = [
             "Future extraction recommended: first frame.",
             "Future extraction recommended: 3-5 representative keyframes.",
@@ -87,7 +85,9 @@ class SourceAnalyser:
             width=metadata["width"],
             height=metadata["height"],
             aspect_ratio=metadata["aspect_ratio"],
+            frame_rate=metadata["frame_rate"],
             strategy=SourceReferenceStrategy.KEYFRAME_EXTRACTION_NEEDED,
+            frame_extraction_status="not_started",
             notes=notes,
             extra={"metadata_extractor": metadata["metadata_extractor"]},
         )
@@ -169,61 +169,3 @@ class SourceAnalyser:
     def _source_id(self, prefix: str) -> str:
         """Create a compact source identifier."""
         return f"{prefix}-{uuid.uuid4().hex[:8]}"
-
-    def _read_video_metadata(self, stored_path: Path) -> dict[str, object]:
-        """Read lightweight video metadata with ffprobe when available."""
-        metadata: dict[str, object] = {
-            "duration_seconds": None,
-            "width": None,
-            "height": None,
-            "aspect_ratio": None,
-            "metadata_extractor": "unavailable",
-            "notes": ["Video metadata extraction unavailable because ffprobe was not found on PATH."],
-        }
-        ffprobe_path = shutil.which("ffprobe")
-        if not ffprobe_path:
-            return metadata
-        command = [
-            ffprobe_path,
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=width,height,duration:format=duration",
-            "-of",
-            "json",
-            str(stored_path),
-        ]
-        try:
-            result = subprocess.run(command, capture_output=True, text=True, check=True, timeout=10)
-            payload = json.loads(result.stdout or "{}")
-        except (subprocess.SubprocessError, json.JSONDecodeError, OSError) as error:
-            metadata["notes"] = [f"Video metadata extraction failed: {error}"]
-            metadata["metadata_extractor"] = "ffprobe_failed"
-            return metadata
-        stream = (payload.get("streams") or [{}])[0]
-        duration = stream.get("duration") or (payload.get("format") or {}).get("duration")
-        width = self._safe_int(stream.get("width"))
-        height = self._safe_int(stream.get("height"))
-        metadata["duration_seconds"] = self._safe_float(duration)
-        metadata["width"] = width
-        metadata["height"] = height
-        metadata["aspect_ratio"] = self._format_aspect_ratio(width, height) if width and height else None
-        metadata["metadata_extractor"] = "ffprobe"
-        metadata["notes"] = ["Basic video metadata extracted with ffprobe."]
-        return metadata
-
-    def _safe_int(self, value: object) -> int | None:
-        """Convert a value to int when possible."""
-        try:
-            return int(value) if value is not None else None
-        except (TypeError, ValueError):
-            return None
-
-    def _safe_float(self, value: object) -> float | None:
-        """Convert a value to float when possible."""
-        try:
-            return float(value) if value is not None else None
-        except (TypeError, ValueError):
-            return None

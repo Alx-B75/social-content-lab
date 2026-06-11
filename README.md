@@ -27,6 +27,19 @@ http://localhost:8501
 
 Copy `.env.example` to `.env` when you are ready to add real API keys. The MVP does not require API keys.
 
+## Optional FFmpeg Support
+
+FFmpeg is optional but recommended for video source planning. When `ffmpeg` and `ffprobe` are available on PATH, Social Content Lab can read basic video metadata and extract local reference frames from uploaded videos.
+
+Check availability in Windows PowerShell:
+
+```powershell
+ffmpeg -version
+ffprobe -version
+```
+
+If FFmpeg is unavailable, the app remains usable. Video uploads are still saved and indexed, but frame extraction is disabled until FFmpeg is installed and available on PATH.
+
 ## What Is Not Implemented Yet
 
 The app does not perform paid media generation, live model calls, URL scraping, vision analysis, full video parsing, audio transcription, OCR, authentication, database storage, deployment, or platform publishing.
@@ -35,7 +48,6 @@ The app does not perform paid media generation, live model calls, URL scraping, 
 
 - Real OpenRouter integration
 - fal.ai or Replicate integration
-- Video keyframe extraction
 - Audio transcription
 - OCR for visible text
 - Cost tracking

@@ -239,6 +239,36 @@ def resolve_aspect_ratio(answers: ClarifyingAnswers) -> str:
     return infer_aspect_ratio(getattr(answers, "platform", None), getattr(answers, "output_format", None))
 
 
+def resolve_call_to_action(project: ContentProject, answers: ClarifyingAnswers) -> str:
+    """Resolve a deterministic call to action from answers or director instructions."""
+    answer_cta = getattr(answers, "call_to_action", None)
+    if answer_cta:
+        return normalize_call_to_action(answer_cta)
+    director_instructions = getattr(project, "director_instructions", "")
+    patterns = [
+        r"(?:call to action|cta)\s*(?:is|:)\s*([^.!?\n]+)",
+        r"curious enough to\s+([^.!?\n]+)",
+        r"(?:make|encourage|get|invite)\s+(?:people|viewers|the audience|users)\s+(?:curious enough\s+)?to\s+([^.!?\n]+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, director_instructions, flags=re.IGNORECASE)
+        if match:
+            return normalize_call_to_action(match.group(1))
+    return "Ask for the next step."
+
+
+def normalize_call_to_action(value: str) -> str:
+    """Normalize a call to action into a short imperative sentence."""
+    cleaned = re.sub(r"\s+", " ", value.strip().strip("\"'` "))
+    cleaned = re.sub(r"^(to|that they|they should|people should|viewers should)\s+", "", cleaned, flags=re.IGNORECASE)
+    if not cleaned:
+        return "Ask for the next step."
+    cleaned = cleaned[0].upper() + cleaned[1:]
+    if cleaned[-1] not in ".!?":
+        cleaned = f"{cleaned}."
+    return cleaned
+
+
 def infer_source_use(text: str) -> str:
     """Infer conservative source-use intent from director instructions."""
     lower_text = text.lower()
