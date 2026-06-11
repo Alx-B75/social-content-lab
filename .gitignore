@@ -9,6 +9,7 @@ __pycache__/
 *.log
 streamlit*.log
 .cache/
+cache/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

@@ -10,6 +10,7 @@ from src.models.source import FrameRecord, FrameRole, SourceRecord
 from src.services.content_pack_builder import ContentPackBuilder
 from src.services.frame_summary import grouped_frame_references, load_frame_references
 from src.services.planning_defaults import normalize_clarifying_answers
+from src.ui.llm_planning_panel import render_llm_planning_panel
 
 
 def render_content_pack_panel(
@@ -38,6 +39,8 @@ def render_content_pack_panel(
 
     if current_pack is None:
         st.info("Generate the content pack to preview and export files.")
+        if recommendation is not None:
+            render_llm_planning_panel(content_pack_builder.project_service.config, content_pack_builder.project_service, project, sources, answers, recommendation)
         return None
 
     current_pack = _render_amend_pack_form(content_pack_builder, project, sources, current_pack)
@@ -47,6 +50,7 @@ def render_content_pack_panel(
     st.code(str(project.project_path))
     st.write("Created files: brief.md, script.md, storyboard.md, prompts.md, captions.md, asset-log.csv, project.json, sources/source-index.json")
     _render_file_previews(content_pack_builder, project)
+    render_llm_planning_panel(content_pack_builder.project_service.config, content_pack_builder.project_service, project, sources, st.session_state.get("answers", answers), recommendation)
     return current_pack
 
 

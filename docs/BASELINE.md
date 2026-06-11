@@ -11,7 +11,9 @@ Social Content Lab is a standalone, local-first Streamlit MVP for planning AI-as
 - Pydantic
 - python-dotenv
 - Pillow for basic image metadata
+- httpx for optional OpenRouter API requests
 - Optional FFmpeg and ffprobe for local video metadata and frame extraction
+- Optional OpenRouter text planning through a selected model routed by OpenRouter
 - Local filesystem storage
 - No database
 - No authentication
@@ -27,6 +29,7 @@ src/services/           Project, source analysis, routing, costing, and pack-bui
 src/ui/                 Streamlit UI panels for the app flow
 templates/              Starter markdown and CSV templates copied into projects
 content/.gitkeep        Placeholder for ignored local generated projects and media
+cache/                  Ignored local API/catalogue cache files
 docs/                   Project documentation
 README.md               Setup, purpose, MVP scope, and roadmap
 requirements.txt        Python dependencies
@@ -51,12 +54,14 @@ requirements.txt        Python dependencies
 - Presents grouped clarifying questions in the requested planning categories.
 - Recommends a workflow route, provider type, rough cost band, rationale, warnings, and next step.
 - Generates and saves a draft content pack with brief, script outline, shot list, prompts, captions, checklist, risk notes, and next actions.
+- Optionally refreshes and caches the OpenRouter model catalogue locally.
+- Optionally advises selected models for text-planning jobs using catalogue capability and pricing metadata.
+- Optionally generates LLM-assisted text drafts via a selected model routed through OpenRouter.
+- Saves LLM-assisted drafts separately from deterministic files as `.llm.md`, `llm-output.json`, and raw output where needed.
 
 ## Intentionally Not Implemented Yet
 
-- Paid media generation
-- Live model calls
-- Real OpenRouter integration
+- Paid image/video/media generation
 - fal.ai or Replicate integration
 - URL scraping
 - Vision model analysis
@@ -72,6 +77,24 @@ requirements.txt        Python dependencies
 - Authentication
 - Database storage
 - Deployment setup
+
+## Optional OpenRouter Text Planning
+
+OpenRouter is the router/provider layer. The selected underlying model performs the writing and planning.
+
+Configuration is read from `.env` or the environment:
+
+```text
+OPENROUTER_API_KEY=
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+OPENROUTER_APP_NAME=Social Content Lab
+OPENROUTER_DEFAULT_MODEL=
+OPENROUTER_CATALOG_CACHE_PATH=cache/openrouter-model-catalog.json
+```
+
+The model catalogue cache is local and ignored by Git. Catalogue data is considered fresh for 24 hours, stale from 24 hours to 7 days, and very stale after 7 days. Cost estimates and model recommendations depend on catalogue freshness.
+
+Uploaded media, extracted frames, absolute local paths, API keys, and secrets are not sent to OpenRouter. The app sends only text summaries, director instructions, source metadata summaries, manually entered selected-frame descriptions, and source-use/risk constraints. LLM output must be reviewed before publication.
 
 ## How To Run Locally
 
@@ -114,7 +137,11 @@ If FFmpeg is unavailable, the app still runs and stores video sources, but frame
 - It must not depend on Places in Time code.
 - No paid API calls are implemented yet.
 - API keys must stay in `.env` or Streamlit secrets and must never be committed.
+- The OpenRouter API key must never be displayed, logged, cached, or written into project files.
+- OpenRouter should be described as the router/provider; the selected model should be described as the text generator.
+- Uploaded media and extracted frames must not be sent to OpenRouter.
 - Generated content and uploaded media under `content/` should remain ignored except `content/.gitkeep`.
+- Local catalogue/API cache files under `cache/` should remain ignored.
 - Code should remain simple and local-first.
 - Selected frame interpretation must remain manual until an explicit future AI vision step is added.
 - Python functions, classes, and modules should keep full docstrings.
@@ -129,4 +156,4 @@ If FFmpeg is unavailable, the app still runs and stores video sources, but frame
 5. Add a simple asset scoring workflow in `asset-log.csv`.
 6. Add export-oriented views for CapCut, Canva, Premiere, and DaVinci Resolve handoff.
 7. Add optional OCR or transcription as local-first tools if needed.
-8. Prepare future OpenRouter and media-provider integrations behind explicit user-triggered actions and rough cost warnings.
+8. Expand OpenRouter planning workflows behind explicit user-triggered actions and rough cost warnings.
