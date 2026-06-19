@@ -51,6 +51,14 @@ When generating an LLM-assisted draft via OpenRouter, the app sends only text pl
 
 Saved LLM-assisted drafts are written separately as `.llm.md` files and `llm-output.json`, leaving deterministic project files intact. Review all LLM output before publication.
 
+## Review And Final Pack
+
+The app can compare deterministic and LLM-assisted pack sections side by side. For each brief, script, storyboard, prompt pack, and caption section, the reviewer can select the deterministic version, the LLM-assisted version, or custom text.
+
+Selections, reviewer notes, export history, and status (`draft`, `needs_review`, `approved`, or `published`) are saved locally in `review-state.json`. Export creates attributed final files and a combined `final-pack.md` without changing the original deterministic or LLM files.
+
+Review state and final outputs remain under the project's ignored `content/` folder. Export is blocked when selected text contains secret-like values, absolute local paths, or local media/cache paths.
+
 ## Optional FFmpeg Support
 
 FFmpeg is optional but recommended for video source planning. When `ffmpeg` and `ffprobe` are available on PATH, Social Content Lab can read basic video metadata and extract local reference frames from uploaded videos.

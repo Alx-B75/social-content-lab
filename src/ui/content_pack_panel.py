@@ -11,6 +11,7 @@ from src.services.content_pack_builder import ContentPackBuilder
 from src.services.frame_summary import grouped_frame_references, load_frame_references
 from src.services.planning_defaults import normalize_clarifying_answers
 from src.ui.llm_planning_panel import render_llm_planning_panel
+from src.ui.review_pack_panel import render_review_pack_panel
 
 
 def render_content_pack_panel(
@@ -51,6 +52,7 @@ def render_content_pack_panel(
     st.write("Created files: brief.md, script.md, storyboard.md, prompts.md, captions.md, asset-log.csv, project.json, sources/source-index.json")
     _render_file_previews(content_pack_builder, project)
     render_llm_planning_panel(content_pack_builder.project_service.config, content_pack_builder.project_service, project, sources, st.session_state.get("answers", answers), recommendation)
+    render_review_pack_panel(project)
     return current_pack
 
 

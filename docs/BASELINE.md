@@ -58,6 +58,9 @@ requirements.txt        Python dependencies
 - Optionally advises selected models for text-planning jobs using catalogue capability and pricing metadata.
 - Optionally generates LLM-assisted text drafts via a selected model routed through OpenRouter.
 - Saves LLM-assisted drafts separately from deterministic files as `.llm.md`, `llm-output.json`, and raw output where needed.
+- Compares deterministic and LLM-assisted pack sections side by side.
+- Persists section selections, custom text, reviewer notes, status, and export history in `review-state.json`.
+- Exports attributed final section files and a combined `final-pack.md` without modifying source packs.
 
 ## Intentionally Not Implemented Yet
 
@@ -95,6 +98,12 @@ OPENROUTER_CATALOG_CACHE_PATH=cache/openrouter-model-catalog.json
 The model catalogue cache is local and ignored by Git. Catalogue data is considered fresh for 24 hours, stale from 24 hours to 7 days, and very stale after 7 days. Cost estimates and model recommendations depend on catalogue freshness.
 
 Uploaded media, extracted frames, absolute local paths, API keys, and secrets are not sent to OpenRouter. The app sends only text summaries, director instructions, source metadata summaries, manually entered selected-frame descriptions, and source-use/risk constraints. LLM output must be reviewed before publication.
+
+## Review And Final Pack
+
+The review panel supports deterministic, LLM-assisted, and custom choices for brief, script, storyboard, prompts, and captions. Review status can be `draft`, `needs_review`, `approved`, or `published`. Final exports retain section-source attribution and remain local under ignored project folders in `content/`.
+
+Final export creates `final-brief.md`, `final-script.md`, `final-storyboard.md`, `final-prompts.md`, `final-captions.md`, and `final-pack.md`. Suspicious secret-like text, absolute paths, and local media/cache paths block export until reviewed.
 
 ## How To Run Locally
 
