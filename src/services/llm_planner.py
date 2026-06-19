@@ -106,6 +106,7 @@ def generate_llm_content_pack(
         "text": response.get("text", ""),
         "usage": response.get("usage", {}),
         "error": response.get("error"),
+        "error_type": response.get("error_type"),
         "parsed_successfully": parsed["parsed_successfully"],
         "parsed": parsed["content"],
         "parse_error": parsed["error"],
@@ -150,8 +151,11 @@ def save_llm_content_pack(
     if parsed:
         _write_llm_markdown_files(project.project_path, parsed)
         write_text_file(project.project_path / "llm-output.json", json.dumps({"metadata": metadata, "content": parsed}, indent=2))
-    if raw_text:
-        write_text_file(project.project_path / "llm-raw-output.txt", raw_text)
+    raw_output_path = project.project_path / "llm-raw-output.txt"
+    if raw_text and not metadata["parsed_successfully"]:
+        write_text_file(raw_output_path, raw_text)
+    elif metadata["parsed_successfully"] and raw_output_path.exists():
+        raw_output_path.unlink()
     _update_project_llm_metadata(project.project_path / "project.json", metadata)
     _append_llm_asset_log(project.project_path / "asset-log.csv", project.project_id, selected_model, advisor_recommendation, output_hash)
     return metadata

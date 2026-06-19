@@ -102,6 +102,31 @@ def advise_models_for_job(
     )
 
 
+def next_recommended_model(
+    advisor_result: ModelAdvisorResult | None,
+    unsuitable_model_ids: list[str],
+    current_model_id: str | None = None,
+) -> ModelAdvisorRecommendation | None:
+    """Return the next recommended model that has not been marked unsuitable."""
+    if advisor_result is None:
+        return None
+    blocked = set(unsuitable_model_ids)
+    if current_model_id:
+        blocked.add(current_model_id)
+    for recommendation in [
+        advisor_result.balanced_recommended,
+        advisor_result.cheapest_sensible,
+        advisor_result.quality_first,
+        advisor_result.manual_override,
+    ]:
+        if recommendation is None:
+            continue
+        if recommendation.selected_model_id in blocked:
+            continue
+        return recommendation
+    return None
+
+
 def estimate_expected_token_use(
     project: ContentProject,
     sources: list[SourceRecord],

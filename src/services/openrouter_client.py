@@ -41,6 +41,7 @@ def call_openrouter_chat(
             "usage": {},
             "raw_response": {},
             "error": "OpenRouter API key is not configured.",
+            "error_type": "missing_api_key",
         }
     endpoint = f"{config.openrouter_base_url.rstrip('/')}/chat/completions"
     payload = {
@@ -55,17 +56,24 @@ def call_openrouter_chat(
         response.raise_for_status()
         data = response.json()
     except httpx.HTTPStatusError as error:
-        return {"ok": False, "text": "", "usage": {}, "raw_response": {}, "error": safe_openrouter_error_message(error)}
+        return {"ok": False, "text": "", "usage": {}, "raw_response": {}, "error": safe_openrouter_error_message(error), "error_type": "http_error"}
     except (httpx.HTTPError, json.JSONDecodeError, OSError) as error:
-        return {"ok": False, "text": "", "usage": {}, "raw_response": {}, "error": safe_openrouter_error_message(error)}
+        return {"ok": False, "text": "", "usage": {}, "raw_response": {}, "error": safe_openrouter_error_message(error), "error_type": "request_error"}
     choices = data.get("choices") if isinstance(data, dict) else []
     if not choices:
-        return {"ok": False, "text": "", "usage": data.get("usage", {}) if isinstance(data, dict) else {}, "raw_response": data, "error": "OpenRouter returned no choices."}
+        return {"ok": False, "text": "", "usage": data.get("usage", {}) if isinstance(data, dict) else {}, "raw_response": data, "error": "OpenRouter returned no choices.", "error_type": "empty_choices"}
     message = choices[0].get("message") if isinstance(choices[0], dict) else {}
     text = str(message.get("content") or "").strip()
     if not text:
-        return {"ok": False, "text": "", "usage": data.get("usage", {}), "raw_response": data, "error": "Selected model returned an empty response."}
-    return {"ok": True, "text": text, "usage": data.get("usage", {}), "raw_response": data, "error": None}
+        return {
+            "ok": False,
+            "text": "",
+            "usage": data.get("usage", {}),
+            "raw_response": data,
+            "error": "The selected model returned an empty response. Try another recommended model or lower max tokens.",
+            "error_type": "empty_model_response",
+        }
+    return {"ok": True, "text": text, "usage": data.get("usage", {}), "raw_response": data, "error": None, "error_type": None}
 
 
 def safe_openrouter_error_message(error: Exception) -> str:

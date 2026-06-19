@@ -125,7 +125,7 @@ def filter_text_planning_models(models: list[dict[str, Any]]) -> list[dict[str, 
     return [
         model
         for model in models
-        if model.get("model_id") and model.get("text_output_supported")
+        if model.get("model_id") and model.get("text_output_supported") and not _is_router_helper_model(model)
     ]
 
 
@@ -235,6 +235,14 @@ def _provider_from_model_id(model_id: str) -> str | None:
     if "/" not in model_id:
         return None
     return model_id.split("/", 1)[0]
+
+
+def _is_router_helper_model(model: dict[str, Any]) -> bool:
+    """Return whether a catalogue record is a router helper instead of an underlying model."""
+    model_id = str(model.get("model_id") or "").lower()
+    provider = str(model.get("provider") or "").lower()
+    name = str(model.get("name") or "").lower()
+    return provider == "openrouter" or model_id.startswith("openrouter/") or name in {"auto router"}
 
 
 def _capability_notes(raw_model: dict[str, Any]) -> dict[str, Any]:

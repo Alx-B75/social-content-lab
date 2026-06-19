@@ -11,7 +11,7 @@ from src.models.project import ContentProject
 from src.models.source import SourceRecord
 from src.services.frame_summary import load_frame_references
 from src.services.llm_planner import build_llm_planning_context, generate_llm_content_pack, save_llm_content_pack
-from src.services.model_advisor import ModelAdvisorRecommendation, advise_models_for_job
+from src.services.model_advisor import ModelAdvisorRecommendation, advise_models_for_job, next_recommended_model
 from src.services.openrouter_catalog import (
     fetch_openrouter_models,
     get_model_catalog_status,
@@ -139,7 +139,14 @@ def _render_generation_section(
     st.write(f"OpenRouter API key configured: {'Yes' if configured else 'No'}")
     if not configured:
         st.info("Add OPENROUTER_API_KEY to `.env` to enable live LLM-assisted drafts. Deterministic generation remains available.")
-    selected_default = advisor_recommendation.selected_model_id if advisor_recommendation else (config.openrouter_default_model or "")
+    alternate_recommendation = st.session_state.get("openrouter_alternate_recommendation")
+    selected_default = (
+        alternate_recommendation.selected_model_id
+        if alternate_recommendation
+        else advisor_recommendation.selected_model_id
+        if advisor_recommendation
+        else (config.openrouter_default_model or "")
+    )
     selected_model = st.text_input("Selected model", value=selected_default, placeholder="Choose from advisor or enter a model ID")
     columns = st.columns(2)
     temperature = columns[0].slider("Temperature", min_value=0.0, max_value=1.5, value=0.5, step=0.05)
@@ -150,12 +157,14 @@ def _render_generation_section(
         with st.spinner("Generating LLM-assisted draft via OpenRouter..."):
             result = generate_llm_content_pack(config, selected_model.strip(), context, temperature, int(max_tokens))
         st.session_state["openrouter_llm_result"] = result
+        st.session_state.pop("openrouter_alternate_recommendation", None)
     result = st.session_state.get("openrouter_llm_result")
     if not result:
         return
     _render_llm_result(result)
+    _render_empty_response_recovery(result)
     save_columns = st.columns(2)
-    if save_columns[0].button("Save LLM version to project", disabled=not result.get("text")):
+    if save_columns[0].button("Save LLM version to project", disabled=not result.get("text") or result.get("error_type") == "empty_model_response"):
         metadata = save_llm_content_pack(project_service, project, result, advisor_recommendation, status.get("last_refreshed"))
         st.success(f"Saved LLM-assisted files. Output hash: {metadata['output_hash']}")
     if save_columns[1].button("Keep deterministic version"):
@@ -202,6 +211,31 @@ def _render_llm_result(result: dict[str, Any]) -> None:
         st.warning(result.get("parse_error") or "JSON parsing did not succeed. Deterministic files were not overwritten.")
     with st.expander("Raw selected model output", expanded=False):
         st.text_area("Raw output", result.get("text") or "", height=240)
+
+
+def _render_empty_response_recovery(result: dict[str, Any]) -> None:
+    """Render explicit recovery controls for empty selected-model responses."""
+    if result.get("error_type") != "empty_model_response":
+        return
+    failed_model = str(result.get("selected_model") or "")
+    advisor_result = st.session_state.get("openrouter_advisor_result")
+    unsuitable_models = st.session_state.setdefault("openrouter_unsuitable_models", [])
+    st.warning(f"Failed selected model: `{failed_model}`")
+    if failed_model and failed_model not in unsuitable_models:
+        if st.button("Mark this model unsuitable for this session/job"):
+            unsuitable_models.append(failed_model)
+            st.session_state["openrouter_unsuitable_models"] = unsuitable_models
+            st.success("Marked model as unsuitable for this session/job.")
+            st.rerun()
+    alternate = next_recommended_model(advisor_result, unsuitable_models, failed_model)
+    if alternate is None:
+        st.info("No alternate recommended model is available. Run the model advisor again or enter a manual selected model ID.")
+        return
+    st.write(f"Next recommended model: `{alternate.selected_model_id}`")
+    st.warning("Trying another selected model may incur additional cost. Click only if you want to make another live call.")
+    if st.button("Try alternate recommended model"):
+        st.session_state["openrouter_alternate_recommendation"] = alternate
+        st.info("Alternate selected model loaded. Review settings, then click Generate LLM-assisted content pack.")
 
 
 def _write_list(label: str, items: object) -> None:
