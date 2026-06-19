@@ -1,6 +1,5 @@
 """Optional LLM-assisted text planning panel."""
 
-import json
 from typing import Any
 
 import streamlit as st
@@ -10,12 +9,25 @@ from src.models.planning import ClarifyingAnswers, WorkflowRecommendation
 from src.models.project import ContentProject
 from src.models.source import SourceRecord
 from src.services.frame_summary import load_frame_references
-from src.services.llm_planner import build_llm_planning_context, generate_llm_content_pack, save_llm_content_pack
+from src.services.llm_planner import (
+    build_llm_planning_context,
+    can_save_structured_llm_result,
+    generate_llm_content_pack,
+    generate_tiny_llm_test,
+    llm_result_status,
+    repair_llm_content_pack_response,
+    requires_high_token_warning,
+    save_failed_llm_output,
+    save_llm_content_pack,
+)
 from src.services.model_advisor import ModelAdvisorRecommendation, advise_models_for_job, next_recommended_model
 from src.services.openrouter_catalog import (
+    estimate_model_cost_from_catalog,
     fetch_openrouter_models,
     get_model_catalog_status,
+    is_router_helper_model_id,
     save_model_catalog_cache,
+    validate_writing_model_id,
 )
 from src.services.openrouter_client import is_openrouter_configured
 from src.services.project_service import ProjectService
@@ -93,6 +105,10 @@ def _render_advisor_section(
         need_strict_json = columns[1].checkbox("Need strict JSON", value=True)
         manual_model_id = st.text_input("Manual selected model ID", value=config.openrouter_default_model or "", placeholder="Example: anthropic/claude-3.5-sonnet")
         submitted = st.form_submit_button("Recommend model for this job")
+    manual_model_valid, manual_model_warning = validate_writing_model_id(manual_model_id)
+    manual_is_router_helper = bool(manual_model_id.strip()) and not manual_model_valid
+    if manual_model_warning and manual_model_id.strip():
+        st.warning(manual_model_warning)
     if submitted:
         advisor_result = advise_models_for_job(
             catalog,
@@ -104,9 +120,11 @@ def _render_advisor_section(
             budget_preference,
             quality_preference,
             need_strict_json,
-            manual_model_id.strip() or None,
+            None if manual_is_router_helper else manual_model_id.strip() or None,
         )
         st.session_state["openrouter_advisor_result"] = advisor_result
+        if advisor_result.selected and not is_router_helper_model_id(advisor_result.selected.selected_model_id):
+            st.session_state["openrouter_pending_model_id"] = advisor_result.selected.selected_model_id
     advisor_result = st.session_state.get("openrouter_advisor_result")
     if advisor_result is None:
         st.info("Refresh or load a catalogue, then ask the model advisor for a recommendation. Manual selected model IDs are also supported.")
@@ -147,15 +165,45 @@ def _render_generation_section(
         if advisor_recommendation
         else (config.openrouter_default_model or "")
     )
-    selected_model = st.text_input("Selected model", value=selected_default, placeholder="Choose from advisor or enter a model ID")
+    if is_router_helper_model_id(selected_default):
+        selected_default = ""
+    selected_model_key = "openrouter_selected_model_input"
+    pending_model = st.session_state.pop("openrouter_pending_model_id", None)
+    if pending_model:
+        st.session_state[selected_model_key] = pending_model
+    elif selected_model_key not in st.session_state:
+        st.session_state[selected_model_key] = selected_default
+    selected_model = st.text_input("Selected model", placeholder="Choose from advisor or enter a model ID", key=selected_model_key)
+    selected_model_valid, selected_model_warning = validate_writing_model_id(selected_model)
+    if selected_model_warning:
+        if selected_model.strip():
+            st.warning(selected_model_warning)
+        else:
+            st.info(selected_model_warning)
+    generation_mode = st.radio("Generation mode", ["Tiny test", "Full content pack"], horizontal=True)
     columns = st.columns(2)
     temperature = columns[0].slider("Temperature", min_value=0.0, max_value=1.5, value=0.5, step=0.05)
-    max_tokens = columns[1].number_input("Max tokens", min_value=500, max_value=8000, value=2200, step=100)
+    if generation_mode == "Tiny test":
+        max_tokens = 400
+        columns[1].write("Max tokens: 400")
+    else:
+        max_tokens = int(columns[1].number_input("Max tokens", min_value=300, max_value=8000, value=1000, step=100))
+    if requires_high_token_warning(max_tokens):
+        st.warning("Max tokens above 1000 may materially increase cost. Increase deliberately and review the estimate before continuing.")
+    _render_cost_estimate(status.get("catalog"), selected_model.strip(), max_tokens, generation_mode)
+    cost_acknowledged = st.checkbox("I understand this call may incur cost")
     st.warning("LLM-assisted text may incur cost. Review all output before publication.")
-    if st.button("Generate LLM-assisted content pack", disabled=not selected_model.strip()):
+    generate_label = "Run tiny test generation" if generation_mode == "Tiny test" else "Generate LLM-assisted content pack"
+    generation_disabled = not selected_model_valid or not cost_acknowledged or not configured
+    if st.button(generate_label, disabled=generation_disabled):
         context = build_llm_planning_context(project, sources, answers, recommendation, load_frame_references(sources), advisor_recommendation)
         with st.spinner("Generating LLM-assisted draft via OpenRouter..."):
-            result = generate_llm_content_pack(config, selected_model.strip(), context, temperature, int(max_tokens))
+            if generation_mode == "Tiny test":
+                result = generate_tiny_llm_test(config, selected_model.strip(), context, temperature, max_tokens)
+                result["generation_mode"] = "tiny_test"
+            else:
+                result = generate_llm_content_pack(config, selected_model.strip(), context, temperature, max_tokens)
+                result["generation_mode"] = "full_content_pack"
         st.session_state["openrouter_llm_result"] = result
         st.session_state.pop("openrouter_alternate_recommendation", None)
     result = st.session_state.get("openrouter_llm_result")
@@ -163,11 +211,44 @@ def _render_generation_section(
         return
     _render_llm_result(result)
     _render_empty_response_recovery(result)
-    save_columns = st.columns(2)
-    if save_columns[0].button("Save LLM version to project", disabled=not result.get("text") or result.get("error_type") == "empty_model_response"):
-        metadata = save_llm_content_pack(project_service, project, result, advisor_recommendation, status.get("last_refreshed"))
-        st.success(f"Saved LLM-assisted files. Output hash: {metadata['output_hash']}")
-    if save_columns[1].button("Keep deterministic version"):
+    _render_result_actions(project_service, project, result, advisor_recommendation, status.get("last_refreshed"))
+
+
+def _render_result_actions(
+    project_service: ProjectService,
+    project: ContentProject,
+    result: dict[str, Any],
+    advisor_recommendation: ModelAdvisorRecommendation | None,
+    catalogue_fetched_at: str | None,
+) -> None:
+    """Render save, repair, and deterministic fallback actions for a result."""
+    if result.get("generation_mode") == "tiny_test" and can_save_structured_llm_result(result):
+        st.info("Tiny test succeeded. Run Full content pack mode to create savable `.llm.md` files.")
+    elif can_save_structured_llm_result(result):
+        save_columns = st.columns(2)
+        if save_columns[0].button("Save LLM version to project"):
+            metadata = save_llm_content_pack(project_service, project, result, advisor_recommendation, catalogue_fetched_at)
+            st.success(f"Saved LLM-assisted files. Output hash: {metadata['output_hash']}")
+    elif result.get("error_type") == "json_parse_failed" and result.get("text"):
+        action_columns = st.columns(2)
+        if action_columns[0].button("Try local JSON extraction/repair"):
+            repaired = repair_llm_content_pack_response(result["text"])
+            if repaired["parsed_successfully"]:
+                updated = dict(result)
+                updated.update({"ok": True, "error": None, "error_type": None, "parsed_successfully": True, "parsed": repaired["content"], "parse_error": None})
+                st.session_state["openrouter_llm_result"] = updated
+                st.success("Local JSON extraction succeeded. No additional model call was made.")
+                st.rerun()
+            else:
+                st.warning(repaired["error"])
+        if action_columns[1].button("Save raw failed output for inspection"):
+            path = save_failed_llm_output(project, result)
+            st.success(f"Saved failed raw output locally as {path.name}.")
+    elif result.get("text"):
+        if st.button("Save raw failed output for inspection"):
+            path = save_failed_llm_output(project, result)
+            st.success(f"Saved failed raw output locally as {path.name}.")
+    if st.button("Keep deterministic version"):
         st.session_state.pop("openrouter_llm_result", None)
         st.info("Kept the deterministic content pack as the active version.")
 
@@ -192,8 +273,23 @@ def _render_llm_result(result: dict[str, Any]) -> None:
     """Render generated LLM result and raw output."""
     if result.get("error"):
         st.warning(result["error"])
+    usage = result.get("usage") or {}
+    st.write(f"Status: **{llm_result_status(result)}**")
+    st.write(f"Parsed successfully: **{'Yes' if result.get('parsed_successfully') else 'No'}**")
     st.write(f"Model used: `{result.get('selected_model')}`")
-    st.write(f"Usage metadata: `{json.dumps(result.get('usage') or {})}`")
+    token_parts = []
+    if usage.get("prompt_tokens") is not None:
+        token_parts.append(f"input {usage['prompt_tokens']}")
+    if usage.get("completion_tokens") is not None:
+        token_parts.append(f"output {usage['completion_tokens']}")
+    if usage.get("total_tokens") is not None:
+        token_parts.append(f"total {usage['total_tokens']}")
+    if token_parts:
+        st.write("Tokens: " + ", ".join(token_parts))
+    if usage.get("cost") is not None:
+        st.write(f"Reported cost: ${float(usage['cost']):.6f}")
+    with st.expander("Detailed usage metadata", expanded=False):
+        st.json(usage)
     if result.get("parsed_successfully"):
         st.success("Structured JSON parsed successfully.")
         parsed = result.get("parsed") or {}
@@ -211,6 +307,23 @@ def _render_llm_result(result: dict[str, Any]) -> None:
         st.warning(result.get("parse_error") or "JSON parsing did not succeed. Deterministic files were not overwritten.")
     with st.expander("Raw selected model output", expanded=False):
         st.text_area("Raw output", result.get("text") or "", height=240)
+
+
+def _render_cost_estimate(catalog: dict[str, Any] | None, model_id: str, max_tokens: int, generation_mode: str) -> None:
+    """Render a rough catalogue-based estimate before a live call."""
+    if not catalog or not model_id:
+        st.write("Rough cost estimate: unavailable")
+        return
+    model = next((item for item in catalog.get("models", []) if item.get("model_id") == model_id), None)
+    if model is None:
+        st.write("Rough cost estimate: unavailable for this selected model")
+        return
+    expected_input_tokens = 400 if generation_mode == "Tiny test" else 1400
+    estimate = estimate_model_cost_from_catalog(model, expected_input_tokens, max_tokens)
+    if not estimate["pricing_available"]:
+        st.write("Rough cost estimate: unknown (catalogue pricing incomplete)")
+        return
+    st.write(f"Rough maximum estimate: ${estimate['estimated_cost']:.6f} ({estimate['cost_band']})")
 
 
 def _render_empty_response_recovery(result: dict[str, Any]) -> None:
@@ -235,7 +348,8 @@ def _render_empty_response_recovery(result: dict[str, Any]) -> None:
     st.warning("Trying another selected model may incur additional cost. Click only if you want to make another live call.")
     if st.button("Try alternate recommended model"):
         st.session_state["openrouter_alternate_recommendation"] = alternate
-        st.info("Alternate selected model loaded. Review settings, then click Generate LLM-assisted content pack.")
+        st.session_state["openrouter_pending_model_id"] = alternate.selected_model_id
+        st.rerun()
 
 
 def _write_list(label: str, items: object) -> None:

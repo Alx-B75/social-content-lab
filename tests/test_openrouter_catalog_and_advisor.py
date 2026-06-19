@@ -8,8 +8,10 @@ from src.services.openrouter_catalog import (
     estimate_model_cost_from_catalog,
     filter_text_planning_models,
     get_model_catalog_status,
+    is_router_helper_model_id,
     normalize_openrouter_model,
     save_model_catalog_cache,
+    validate_writing_model_id,
 )
 
 
@@ -42,6 +44,10 @@ def test_catalog_normalizes_filters_and_estimates_cost() -> None:
     assert normalized_model["tool_use_supported"] is True
     assert estimate["pricing_available"] is True
     assert estimate["cost_band"] == "low"
+    assert is_router_helper_model_id("openrouter/auto") is True
+    valid, warning = validate_writing_model_id("openrouter/auto")
+    assert valid is False
+    assert warning == "openrouter/auto is a router helper, not a specific writing model. For predictable cost and output, choose a concrete model."
 
 
 def test_catalog_status_reports_fresh_and_very_stale(app_config) -> None:

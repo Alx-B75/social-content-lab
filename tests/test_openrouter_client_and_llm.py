@@ -4,10 +4,21 @@ import json
 import re
 
 import httpx
+import pytest
 
 from src.config import AppConfig
 from src.models.planning import ClarifyingAnswers
-from src.services.llm_planner import build_llm_planning_context, parse_llm_content_pack_response, save_llm_content_pack
+from src.services.llm_planner import (
+    build_llm_planning_context,
+    can_save_structured_llm_result,
+    generate_llm_content_pack,
+    generate_tiny_llm_test,
+    parse_llm_content_pack_response,
+    repair_llm_content_pack_response,
+    requires_high_token_warning,
+    save_failed_llm_output,
+    save_llm_content_pack,
+)
 from src.services.model_advisor import ModelAdvisorRecommendation
 from src.services.openrouter_client import call_openrouter_chat, is_openrouter_configured, safe_openrouter_error_message
 from src.services.project_service import ProjectService
@@ -100,6 +111,7 @@ def test_llm_context_omits_paths_and_save_flow_is_separate(app_config, content_p
         "rationale": "Short teaser.",
     }
     result = {
+        "ok": True,
         "selected_model": advisor.selected_model_id,
         "text": json.dumps(parsed),
         "usage": {"total_tokens": 200, "cost": 0.00001},
@@ -122,7 +134,6 @@ def test_llm_context_omits_paths_and_save_flow_is_separate(app_config, content_p
 
 def test_llm_raw_output_saved_only_for_unparsed_response(app_config, content_project) -> None:
     """Save raw selected-model output only when parsing fails."""
-    project_service = ProjectService(app_config)
     advisor = ModelAdvisorRecommendation(
         selected_model_id="sample/quality",
         display_name="Sample Quality",
@@ -136,7 +147,65 @@ def test_llm_raw_output_saved_only_for_unparsed_response(app_config, content_pro
         "parsed": None,
     }
 
-    save_llm_content_pack(project_service, content_project, failed_result, advisor, "sample-time")
+    save_failed_llm_output(content_project, failed_result)
 
     assert (content_project.project_path / "llm-raw-output.txt").exists()
+    assert not list(content_project.project_path.glob("*.llm.md"))
     assert parse_llm_content_pack_response("not json")["parsed_successfully"] is False
+
+
+def test_json_parse_failure_blocks_structured_save(monkeypatch, app_config, content_project) -> None:
+    """Classify malformed model text and reject structured pack saving."""
+    configured = app_config.model_copy(update={"openrouter_api_key": "sk-test-secret"})
+
+    def fake_call(*args, **kwargs):
+        return {"ok": True, "text": "not valid json", "usage": {"total_tokens": 20}, "error": None, "error_type": None}
+
+    monkeypatch.setattr("src.services.llm_planner.call_openrouter_chat", fake_call)
+    result = generate_llm_content_pack(configured, "sample/model", {}, 0.5, 600)
+
+    assert result["ok"] is False
+    assert result["error_type"] == "json_parse_failed"
+    assert can_save_structured_llm_result(result) is False
+    with pytest.raises(ValueError):
+        save_llm_content_pack(ProjectService(app_config), content_project, result, None, None)
+    assert not list(content_project.project_path.glob("*.llm.md"))
+
+
+def test_local_json_repair_handles_fences_and_surrounding_text() -> None:
+    """Repair JSON wrapped in Markdown or explanatory text without a model call."""
+    fenced = '```json\n{"hook_options": ["Hook"], "caption_drafts": [], "rationale": "Short"}\n```'
+    surrounded = 'Here is the result:\n{"hook_options": ["Hook"], "caption_drafts": [], "rationale": "Short"}\nThanks.'
+
+    assert parse_llm_content_pack_response(fenced)["parsed_successfully"] is True
+    repaired = repair_llm_content_pack_response(surrounded)
+
+    assert repaired["parsed_successfully"] is True
+    assert repaired["content"]["hook_options"] == ["Hook"]
+
+
+def test_high_token_warning_threshold() -> None:
+    """Warn only when the output cap exceeds the normal 1000-token limit."""
+    assert requires_high_token_warning(1000) is False
+    assert requires_high_token_warning(1001) is True
+
+
+def test_tiny_generation_caps_max_tokens(monkeypatch, app_config) -> None:
+    """Keep tiny test generation within the 300-500 token safety range."""
+    captured = {}
+
+    def fake_call(config, selected_model, messages, temperature, max_tokens):
+        captured["max_tokens"] = max_tokens
+        return {
+            "ok": True,
+            "text": '{"hook_options": [], "caption_drafts": [], "rationale": "ok"}',
+            "usage": {},
+            "error": None,
+            "error_type": None,
+        }
+
+    monkeypatch.setattr("src.services.llm_planner.call_openrouter_chat", fake_call)
+    result = generate_tiny_llm_test(app_config, "sample/model", {}, max_tokens=2000)
+
+    assert captured["max_tokens"] == 500
+    assert result["parsed_successfully"] is True

@@ -13,6 +13,7 @@ from src.services.file_utils import ensure_directory, write_text_file
 
 FRESH_SECONDS = 24 * 60 * 60
 VERY_STALE_SECONDS = 7 * 24 * 60 * 60
+ROUTER_HELPER_WARNING = "openrouter/auto is a router helper, not a specific writing model. For predictable cost and output, choose a concrete model."
 
 
 def fetch_openrouter_models(config: AppConfig, timeout_seconds: float = 20.0) -> dict[str, Any]:
@@ -129,6 +130,21 @@ def filter_text_planning_models(models: list[dict[str, Any]]) -> list[dict[str, 
     ]
 
 
+def is_router_helper_model_id(model_id: str | None) -> bool:
+    """Return whether a model ID is an OpenRouter helper rather than a concrete model."""
+    normalized = str(model_id or "").strip().lower()
+    return normalized == "openrouter/auto" or normalized.startswith("openrouter/")
+
+
+def validate_writing_model_id(model_id: str | None) -> tuple[bool, str | None]:
+    """Validate that a selected writing model is concrete and non-empty."""
+    if not str(model_id or "").strip():
+        return False, "Choose or enter a concrete selected model before generation."
+    if is_router_helper_model_id(model_id):
+        return False, ROUTER_HELPER_WARNING
+    return True, None
+
+
 def estimate_model_cost_from_catalog(model: dict[str, Any], input_tokens: int, output_tokens: int) -> dict[str, Any]:
     """Estimate cost from normalized catalogue pricing when available."""
     prompt_price = model.get("pricing_prompt")
@@ -242,7 +258,7 @@ def _is_router_helper_model(model: dict[str, Any]) -> bool:
     model_id = str(model.get("model_id") or "").lower()
     provider = str(model.get("provider") or "").lower()
     name = str(model.get("name") or "").lower()
-    return provider == "openrouter" or model_id.startswith("openrouter/") or name in {"auto router"}
+    return provider == "openrouter" or is_router_helper_model_id(model_id) or name in {"auto router"}
 
 
 def _capability_notes(raw_model: dict[str, Any]) -> dict[str, Any]:

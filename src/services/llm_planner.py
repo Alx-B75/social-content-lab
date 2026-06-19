@@ -99,15 +99,55 @@ def generate_llm_content_pack(
     """Generate a content pack draft with the selected model routed through OpenRouter."""
     messages = build_llm_prompt(context)
     response = call_openrouter_chat(config, selected_model, messages, temperature, max_tokens)
+    return _build_generation_result(selected_model, response)
+
+
+def generate_tiny_llm_test(
+    config: AppConfig,
+    selected_model: str,
+    context: dict[str, Any],
+    temperature: float = 0.6,
+    max_tokens: int = 400,
+) -> dict[str, Any]:
+    """Run a small hooks/captions/rationale test with a strict low token cap."""
+    safe_max_tokens = min(max(max_tokens, 300), 500)
+    messages = [
+        {
+            "role": "system",
+            "content": "Return strict JSON only. Use British English. Keep output concise and do not invent unsupported claims.",
+        },
+        {
+            "role": "user",
+            "content": (
+                "Create a tiny text-planning test from this context. Return exactly: "
+                '{"hook_options": [], "caption_drafts": [], "rationale": ""}. '
+                "Do not mention local paths, uploaded media, or hidden metadata.\n\n"
+                f"{json.dumps(context, indent=2)}"
+            ),
+        },
+    ]
+    response = call_openrouter_chat(config, selected_model, messages, temperature, safe_max_tokens)
+    return _build_generation_result(selected_model, response)
+
+
+def _build_generation_result(selected_model: str, response: dict[str, Any]) -> dict[str, Any]:
+    """Build a normalized generation result with explicit failure classification."""
     parsed = parse_llm_content_pack_response(response.get("text", ""))
+    response_ok = bool(response.get("ok"))
+    parsed_successfully = bool(parsed["parsed_successfully"])
+    error_type = response.get("error_type")
+    error = response.get("error")
+    if response_ok and not parsed_successfully:
+        error_type = "json_parse_failed"
+        error = "The selected model returned text that could not be parsed as JSON. Keep the deterministic version or try local JSON extraction/repair."
     return {
-        "ok": bool(response.get("ok")),
+        "ok": response_ok and parsed_successfully,
         "selected_model": selected_model,
         "text": response.get("text", ""),
         "usage": response.get("usage", {}),
-        "error": response.get("error"),
-        "error_type": response.get("error_type"),
-        "parsed_successfully": parsed["parsed_successfully"],
+        "error": error,
+        "error_type": error_type,
+        "parsed_successfully": parsed_successfully,
         "parsed": parsed["content"],
         "parse_error": parsed["error"],
     }
@@ -122,8 +162,44 @@ def parse_llm_content_pack_response(raw_text: str) -> dict[str, Any]:
         return {"parsed_successfully": False, "content": None, "error": f"JSON parse failed: {type(error).__name__}"}
     if not isinstance(payload, dict):
         return {"parsed_successfully": False, "content": None, "error": "JSON root was not an object."}
-    normalized = {key: payload.get(key, [] if key.endswith("s") or key in {"hook_options"} else "") for key in LLM_JSON_KEYS}
-    return {"parsed_successfully": True, "content": normalized, "error": None}
+    return _normalize_llm_payload(payload)
+
+
+def repair_llm_content_pack_response(raw_text: str) -> dict[str, Any]:
+    """Locally extract and parse the first JSON object from raw model text."""
+    cleaned = _strip_json_fence(raw_text.strip())
+    decoder = json.JSONDecoder()
+    for index, character in enumerate(cleaned):
+        if character != "{":
+            continue
+        try:
+            payload, _ = decoder.raw_decode(cleaned[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return _normalize_llm_payload(payload)
+    return {"parsed_successfully": False, "content": None, "error": "Local JSON extraction did not find a valid JSON object."}
+
+
+def can_save_structured_llm_result(llm_result: dict[str, Any]) -> bool:
+    """Return whether a result is a valid structured LLM content pack."""
+    return bool(llm_result.get("ok") and llm_result.get("parsed_successfully") and isinstance(llm_result.get("parsed"), dict))
+
+
+def llm_result_status(llm_result: dict[str, Any]) -> str:
+    """Return a concise user-facing generation status label."""
+    if can_save_structured_llm_result(llm_result):
+        return "success"
+    if llm_result.get("error_type") == "empty_model_response":
+        return "empty response"
+    if llm_result.get("error_type") == "json_parse_failed":
+        return "JSON parse failed"
+    return "API error"
+
+
+def requires_high_token_warning(max_tokens: int) -> bool:
+    """Return whether a requested output cap should show an elevated cost warning."""
+    return max_tokens > 1000
 
 
 def save_llm_content_pack(
@@ -134,6 +210,8 @@ def save_llm_content_pack(
     catalogue_fetched_at: str | None,
 ) -> dict[str, Any]:
     """Save LLM-assisted output separately from deterministic project files."""
+    if not can_save_structured_llm_result(llm_result):
+        raise ValueError("Only successfully parsed structured LLM results can be saved as an LLM content pack.")
     parsed = llm_result.get("parsed") if isinstance(llm_result.get("parsed"), dict) else None
     selected_model = str(llm_result.get("selected_model") or "unknown")
     raw_text = str(llm_result.get("text") or "")
@@ -159,6 +237,16 @@ def save_llm_content_pack(
     _update_project_llm_metadata(project.project_path / "project.json", metadata)
     _append_llm_asset_log(project.project_path / "asset-log.csv", project.project_id, selected_model, advisor_recommendation, output_hash)
     return metadata
+
+
+def save_failed_llm_output(project: ContentProject, llm_result: dict[str, Any]) -> Path:
+    """Save failed raw model text for inspection without creating structured LLM files."""
+    raw_text = str(llm_result.get("text") or "").strip()
+    if not raw_text:
+        raise ValueError("There is no raw selected-model output to save.")
+    raw_output_path = project.project_path / "llm-raw-output.txt"
+    write_text_file(raw_output_path, raw_text)
+    return raw_output_path
 
 
 def _source_summary(source: SourceRecord) -> dict[str, Any]:
@@ -307,6 +395,12 @@ def _strip_json_fence(value: str) -> str:
             lines = lines[:-1]
         return "\n".join(lines).strip()
     return value
+
+
+def _normalize_llm_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Normalize a parsed JSON object into the supported LLM pack fields."""
+    normalized = {key: payload.get(key, [] if key.endswith("s") or key in {"hook_options"} else "") for key in LLM_JSON_KEYS}
+    return {"parsed_successfully": True, "content": normalized, "error": None}
 
 
 def _bullet_lines(items: object) -> str:
