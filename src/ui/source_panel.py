@@ -6,8 +6,17 @@ import streamlit as st
 
 from src.models.project import ContentProject
 from src.models.source import FrameRecord, FrameRole, SourceRecord, SourceType
+from src.services.frame_prefill import apply_prefill_to_frame, build_local_frame_prefill, prefill_missing_frame_fields
 from src.services.frame_summary import selected_frame_count
+from src.services.model_advisor import advise_vision_model
+from src.services.openrouter_catalog import (
+    fetch_openrouter_models,
+    get_model_catalog_status,
+    is_router_helper_model_id,
+    save_model_catalog_cache,
+)
 from src.services.source_analyser import SourceAnalyser
+from src.services.vision_frame_analyser import analyse_frame_with_vision_model, apply_ai_frame_prefill
 from src.services.video_frame_extractor import (
     build_frame_index,
     extract_reference_frames,
@@ -174,6 +183,7 @@ def _render_video_frame_tools(
         _extract_frames_for_source(source_analyser, project, sources, source)
     frames = load_frame_index(source.frame_index_path)
     if frames:
+        _render_frame_prefill_controls(source_analyser, project, sources, source, frames)
         _render_frame_selection(source_analyser, project, sources, source, frames)
     elif source.frame_extraction_status == "completed":
         st.info("Frame extraction completed, but no frame index was found.")
@@ -226,6 +236,7 @@ def _render_frame_selection(
         updated_frames: list[FrameRecord] = []
         for index, frame in enumerate(frames):
             with st.expander(_frame_caption(frame), expanded=index == 0):
+                st.caption(_frame_prefill_status(frame))
                 columns = st.columns([1, 2])
                 if frame.absolute_path.exists():
                     columns[0].image(str(frame.absolute_path), caption=_frame_caption(frame), use_container_width=True)
@@ -271,6 +282,195 @@ def _render_frame_selection(
         source.selected_frame_count = selected_frame_count(updated_frames)
         _persist_video_frame_state(source_analyser, project, sources)
         st.success("Frame selections saved.")
+
+
+def _render_frame_prefill_controls(
+    source_analyser: SourceAnalyser,
+    project: ContentProject,
+    sources: list[SourceRecord],
+    source: SourceRecord,
+    frames: list[FrameRecord],
+) -> None:
+    """Render local and optional consent-gated AI frame prefill controls."""
+    st.markdown("**Frame interpretation prefill**")
+    st.caption("Prefill suggestions are starting points. Review every field before using it in generated content.")
+    replace_local = st.checkbox(
+        "Replace existing values with local suggestions",
+        value=False,
+        key=f"replace_local_prefill_{source.source_id}",
+    )
+    frame_options = {f"{_frame_caption(frame)} ({frame.file_name})": frame.frame_id for frame in frames}
+    selected_local_label = st.selectbox(
+        "Current frame",
+        list(frame_options),
+        key=f"local_prefill_frame_{source.source_id}",
+    )
+    local_columns = st.columns(2)
+    if local_columns[0].button("Prefill current frame", key=f"prefill_current_{source.source_id}"):
+        frame_id = frame_options[selected_local_label]
+        updated = [
+            apply_prefill_to_frame(
+                frame,
+                build_local_frame_prefill(frame, source, project, st.session_state.get("answers")),
+                replace_existing=replace_local,
+            )
+            if frame.frame_id == frame_id
+            else frame
+            for frame in frames
+        ]
+        _save_prefilled_frames(source_analyser, project, sources, source, updated)
+        st.success("Local frame prefill saved. Review the suggestions before publication.")
+        st.rerun()
+    if local_columns[1].button("Prefill all frames", key=f"prefill_all_{source.source_id}"):
+        updated = prefill_missing_frame_fields(
+            frames,
+            source,
+            project,
+            st.session_state.get("answers"),
+            replace_existing=replace_local,
+        )
+        _save_prefilled_frames(source_analyser, project, sources, source, updated)
+        st.success("Local frame prefill saved. Review the suggestions before publication.")
+        st.rerun()
+    _render_ai_frame_prefill(source_analyser, project, sources, source, frames, frame_options)
+
+
+def _render_ai_frame_prefill(
+    source_analyser: SourceAnalyser,
+    project: ContentProject,
+    sources: list[SourceRecord],
+    source: SourceRecord,
+    frames: list[FrameRecord],
+    frame_options: dict[str, str],
+) -> None:
+    """Render an explicit-consent OpenRouter vision prefill workflow."""
+    config = source_analyser.project_service.config
+    with st.expander("Optional AI frame prefill", expanded=False):
+        st.warning("This sends only the selected extracted frame images and safe project text to OpenRouter. It never sends the original video or local file paths.")
+        status = get_model_catalog_status(config.openrouter_catalog_cache_path)
+        st.caption(
+            f"OpenRouter key detected: {'yes' if config.openrouter_api_key else 'no'} | "
+            f"Catalogue: {status['availability']} | Freshness: {status['freshness']} | Models: {status['model_count']}"
+        )
+        if status.get("warning"):
+            st.info(status["warning"])
+        if st.button("Refresh model catalogue", key=f"refresh_vision_catalog_{source.source_id}"):
+            catalog = fetch_openrouter_models(config)
+            if catalog.get("fetch_status") == "ok":
+                save_model_catalog_cache(config.openrouter_catalog_cache_path, catalog)
+                st.success(f"Catalogue refreshed with {catalog.get('model_count', 0)} models.")
+                st.rerun()
+            else:
+                st.error("The OpenRouter model catalogue could not be refreshed.")
+        catalog = status.get("catalog")
+        recommendation = advise_vision_model(catalog)
+        recommended_id = recommendation.selected_model_id if recommendation else ""
+        model_id = st.text_input(
+            "Concrete vision model ID",
+            value=recommended_id,
+            placeholder="provider/vision-model",
+            key=f"vision_model_{source.source_id}",
+        ).strip()
+        if recommendation:
+            st.caption(
+                f"Recommended: {recommendation.display_name} | Cost band: {recommendation.estimated_cost_band} | "
+                f"Confidence: {recommendation.confidence}"
+            )
+        if is_router_helper_model_id(model_id):
+            st.warning("Choose a concrete vision-capable model. OpenRouter helper/router entries are not suitable here.")
+        catalog_models = catalog.get("models", []) if isinstance(catalog, dict) else []
+        matched_model = next((model for model in catalog_models if model.get("model_id") == model_id), None)
+        vision_capability_confirmed = not catalog_models or bool(matched_model and matched_model.get("vision_input_supported"))
+        if model_id and catalog_models and matched_model is None:
+            st.warning("This model ID is not in the cached catalogue, so vision capability cannot be confirmed. Refresh the catalogue or choose the recommendation.")
+        elif matched_model and not matched_model.get("vision_input_supported"):
+            st.warning("The cached catalogue does not identify this model as vision-capable.")
+        selected_labels = st.multiselect(
+            "Extracted frames to analyse",
+            list(frame_options),
+            key=f"vision_frames_{source.source_id}",
+        )
+        max_tokens = st.number_input(
+            "Maximum output tokens per frame",
+            min_value=300,
+            max_value=1000,
+            value=600,
+            step=100,
+            key=f"vision_tokens_{source.source_id}",
+        )
+        replace_ai = st.checkbox(
+            "Replace existing values with AI suggestions",
+            value=False,
+            key=f"replace_ai_prefill_{source.source_id}",
+        )
+        st.warning("Each selected frame makes a separate paid API call. Review the model and frame count before continuing.")
+        consent = st.checkbox(
+            "I consent to sending the selected extracted frame images to OpenRouter and understand this may incur cost",
+            value=False,
+            key=f"vision_consent_{source.source_id}",
+        )
+        can_run = bool(
+            config.openrouter_api_key
+            and consent
+            and selected_labels
+            and model_id
+            and not is_router_helper_model_id(model_id)
+            and vision_capability_confirmed
+        )
+        if st.button("Run AI frame prefill", disabled=not can_run, key=f"run_vision_prefill_{source.source_id}"):
+            selected_ids = {frame_options[label] for label in selected_labels}
+            updated_frames: list[FrameRecord] = []
+            successes = 0
+            failures: list[str] = []
+            for frame in frames:
+                if frame.frame_id not in selected_ids:
+                    updated_frames.append(frame)
+                    continue
+                result = analyse_frame_with_vision_model(config, model_id, frame.absolute_path, project, frame, int(max_tokens))
+                if not result.get("parsed_successfully"):
+                    updated_frames.append(frame)
+                    failures.append(f"{frame.file_name}: {result.get('error') or 'analysis failed'}")
+                    continue
+                updated = apply_ai_frame_prefill(frame, result.get("analysis"), model_id, replace_existing=replace_ai)
+                updated_frames.append(updated)
+                source_analyser.project_service.upsert_frame_analysis_asset_log(
+                    project,
+                    updated,
+                    model_id,
+                    recommendation.estimated_cost_band if recommendation and recommendation.selected_model_id == model_id else "unknown",
+                )
+                successes += 1
+            _save_prefilled_frames(source_analyser, project, sources, source, updated_frames)
+            if successes:
+                st.success(f"AI prefill saved for {successes} frame(s). Human review is required.")
+            for failure in failures:
+                st.error(failure)
+            if successes:
+                st.rerun()
+
+
+def _save_prefilled_frames(
+    source_analyser: SourceAnalyser,
+    project: ContentProject,
+    sources: list[SourceRecord],
+    source: SourceRecord,
+    frames: list[FrameRecord],
+) -> None:
+    """Persist frame prefills and related project/source metadata."""
+    if source.frame_index_path is None:
+        return
+    save_frame_index(source.source_id, source.frame_index_path, frames)
+    source.selected_frame_count = selected_frame_count(frames)
+    _persist_video_frame_state(source_analyser, project, sources)
+
+
+def _frame_prefill_status(frame: FrameRecord) -> str:
+    """Return a compact provenance and review status for one frame."""
+    source = frame.prefill_source.replace("_", " ") if frame.prefill_source else "none"
+    model = f" | Model: {frame.prefill_model}" if frame.prefill_model else ""
+    confidence = f" | Confidence: {frame.prefill_confidence}" if frame.prefill_confidence else ""
+    review = " | Human review required" if frame.needs_human_review else ""
+    return f"Prefill: {source}{model}{confidence}{review}"
 
 
 def _video_metadata_text(source: SourceRecord) -> str:

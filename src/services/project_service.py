@@ -166,6 +166,39 @@ class ProjectService:
             rows.append(frame_row)
         self._write_asset_log_rows(asset_log_path, rows)
 
+    def upsert_frame_analysis_asset_log(
+        self,
+        project: ContentProject,
+        frame: FrameRecord,
+        model_id: str,
+        cost_band: str,
+    ) -> None:
+        """Add or update one deduplicated AI frame-analysis asset-log row."""
+        self.ensure_asset_log(project)
+        asset_log_path = project.project_path / "asset-log.csv"
+        rows = self._read_asset_log_rows(asset_log_path)
+        asset_id = f"frame-analysis-{frame.frame_id}"
+        row = {
+            "asset_id": asset_id,
+            "project_id": project.project_id,
+            "source_or_generated": "generated_metadata",
+            "file_name": frame.file_name,
+            "tool_or_model": model_id,
+            "estimated_cost_band": cost_band,
+            "time_spent_minutes": "",
+            "rating": "needs_human_review",
+            "historical_or_brand_risk": frame.historical_or_brand_risk or "needs_human_review",
+            "keep_reject": "undecided",
+            "notes": "AI vision prefill for one extracted frame; human review required.",
+        }
+        for existing in rows:
+            if existing.get("asset_id") == asset_id:
+                existing.update(row)
+                break
+        else:
+            rows.append(row)
+        self._write_asset_log_rows(asset_log_path, rows)
+
     def save_uploaded_file(self, project: ContentProject, filename: str, data: bytes) -> Path:
         """Save uploaded file bytes under the project sources folder."""
         safe_name = Path(filename).name

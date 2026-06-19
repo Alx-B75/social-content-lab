@@ -63,6 +63,12 @@ class FrameRecord(BaseModel):
     historical_or_brand_risk: str = ""
     recommended_use: str = ""
     avoid_using_for: str = ""
+    prefill_source: str = "none"
+    prefill_model: str | None = None
+    prefill_timestamp: str | None = None
+    prefill_confidence: str = ""
+    needs_human_review: bool = False
+    field_sources: dict[str, str] = Field(default_factory=dict)
 
 
 class SourceRecord(BaseModel):

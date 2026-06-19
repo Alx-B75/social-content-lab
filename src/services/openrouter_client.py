@@ -28,7 +28,7 @@ def build_openrouter_headers(config: AppConfig) -> dict[str, str]:
 def call_openrouter_chat(
     config: AppConfig,
     selected_model: str,
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     temperature: float,
     max_tokens: int,
     timeout_seconds: float = 60.0,

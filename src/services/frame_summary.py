@@ -53,6 +53,8 @@ def frame_risk_notes(frames: list[FrameRecord]) -> list[str]:
     notes: list[str] = []
     if any(frame.selected_role == FrameRole.NEEDS_REVIEW for frame in frames):
         notes.append("Some selected frames require review before generation or publication.")
+    if any(frame.prefill_source in {"ai_vision", "mixed"} and frame.needs_human_review for frame in frames):
+        notes.append("AI-prefilled frame descriptions require human review before publication.")
     for frame in frames:
         if frame.selected_role == FrameRole.DO_NOT_USE:
             avoid = frame.avoid_using_for or "generation or publication"

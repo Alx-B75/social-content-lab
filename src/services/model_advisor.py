@@ -8,7 +8,11 @@ from src.models.planning import ClarifyingAnswers
 from src.models.project import ContentProject
 from src.models.source import FrameRecord, SourceRecord
 from src.services.frame_summary import frame_reference_summary
-from src.services.openrouter_catalog import estimate_model_cost_from_catalog, select_candidate_models_for_job
+from src.services.openrouter_catalog import (
+    estimate_model_cost_from_catalog,
+    is_router_helper_model_id,
+    select_candidate_models_for_job,
+)
 
 
 TaskType = Literal[
@@ -51,6 +55,54 @@ class ModelAdvisorResult(BaseModel):
     manual_override: ModelAdvisorRecommendation | None = None
     selected: ModelAdvisorRecommendation | None = None
     warnings: list[str] = Field(default_factory=list)
+
+
+def advise_vision_model(catalog: dict[str, Any] | None) -> ModelAdvisorRecommendation | None:
+    """Recommend a concrete vision-capable catalogue model for frame prefill."""
+    if catalog is None:
+        return None
+    candidates = [
+        model
+        for model in catalog.get("models", [])
+        if model.get("model_id")
+        and model.get("vision_input_supported")
+        and model.get("text_output_supported")
+        and not is_router_helper_model_id(model.get("model_id"))
+    ]
+    if not candidates:
+        return None
+    ranked = sorted(candidates, key=_vision_model_rank)
+    model = ranked[0]
+    cost = estimate_model_cost_from_catalog(model, 1200, 600)
+    reasons = ["Accepts image input and returns text through a concrete model ID."]
+    if model.get("structured_output_supported"):
+        reasons.append("Catalogue metadata indicates structured-output support.")
+    if cost.get("pricing_available"):
+        reasons.append("Its estimated small-frame-analysis cost is comparatively low among suitable candidates.")
+    return ModelAdvisorRecommendation(
+        selected_model_id=model["model_id"],
+        display_name=model.get("name") or model["model_id"],
+        tier="balanced_recommended",
+        why_this_model_fits=reasons,
+        estimated_cost_band=cost.get("cost_band") or "unknown",
+        estimated_token_use={"input_tokens": 1200, "output_tokens": 600},
+        known_capability_strengths=["vision input", "text output"],
+        known_limitations=["Frame interpretation can be inaccurate and requires human review."],
+        confidence="medium" if cost.get("pricing_available") else "low",
+        catalogue_freshness_warning=_freshness_warning(catalog),
+        catalogue_fetched_at=catalog.get("fetched_at"),
+    )
+
+
+def _vision_model_rank(model: dict[str, Any]) -> tuple[int, int, float, str]:
+    """Return a stable rank favoring structured output and known low pricing."""
+    cost = estimate_model_cost_from_catalog(model, 1200, 600)
+    return (
+        0 if model.get("structured_output_supported") else 1,
+        0 if cost.get("pricing_available") else 1,
+        float(cost.get("estimated_cost") or 999.0),
+        str(model.get("model_id")),
+    )
 
 
 def advise_models_for_job(

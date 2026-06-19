@@ -48,6 +48,9 @@ requirements.txt        Python dependencies
 - Extracts local video reference frames when FFmpeg and ffprobe are available on PATH.
 - Lets selected video frames be marked as hero frames, visual references, possible backgrounds, needs review, do not use, or unselected.
 - Lets selected video frames be manually described with subject, setting, mood, visual style, on-screen text, rights notes, risk notes, recommended use, and avoid-use guidance.
+- Prefills missing frame fields locally from frame position and project/source context without claiming visual inspection.
+- Optionally analyses explicitly selected extracted frames through a concrete OpenRouter vision model after per-action consent and cost warning.
+- Stores frame prefill source, model, timestamp, confidence, field provenance, and human-review status in `frame-index.json`.
 - Feeds selected frame roles and manual descriptions into deterministic shot lists, prompt packs, risk notes, and content pack previews.
 - Stores URL and manual-description source metadata without scraping.
 - Summarises pasted text with a local preview, word count, and likely use-case heuristic.
@@ -67,8 +70,8 @@ requirements.txt        Python dependencies
 - Paid image/video/media generation
 - fal.ai or Replicate integration
 - URL scraping
-- Vision model analysis
-- AI vision interpretation of extracted frames
+- Automatic or unconsented vision analysis
+- Sending original videos or uploaded source media to vision models
 - Full video parsing
 - Audio transcription
 - OCR for visible text
@@ -97,7 +100,7 @@ OPENROUTER_CATALOG_CACHE_PATH=cache/openrouter-model-catalog.json
 
 The model catalogue cache is local and ignored by Git. Catalogue data is considered fresh for 24 hours, stale from 24 hours to 7 days, and very stale after 7 days. Cost estimates and model recommendations depend on catalogue freshness.
 
-Uploaded media, extracted frames, absolute local paths, API keys, and secrets are not sent to OpenRouter. The app sends only text summaries, director instructions, source metadata summaries, manually entered selected-frame descriptions, and source-use/risk constraints. LLM output must be reviewed before publication.
+Text-planning calls do not send uploaded media, extracted frames, absolute local paths, API keys, or secrets. Optional vision prefill sends only the extracted frame images explicitly selected by the user plus safe project text after consent. It never sends original videos, uploaded source files, absolute local paths, or secrets. All model output must be reviewed before publication.
 
 ## Review And Final Pack
 
@@ -144,15 +147,16 @@ If FFmpeg is unavailable, the app still runs and stores video sources, but frame
 
 - This is a standalone project.
 - It must not depend on Places in Time code.
-- No paid API calls are implemented yet.
+- Paid OpenRouter calls are optional, explicit, and disabled until the user acknowledges cost and any required media consent.
 - API keys must stay in `.env` or Streamlit secrets and must never be committed.
 - The OpenRouter API key must never be displayed, logged, cached, or written into project files.
 - OpenRouter should be described as the router/provider; the selected model should be described as the text generator.
-- Uploaded media and extracted frames must not be sent to OpenRouter.
+- Text-planning calls must not send uploaded media or extracted frames to OpenRouter.
+- Vision prefill may send only explicitly selected extracted frame images after user consent; original videos and uploaded source media must never be sent.
 - Generated content and uploaded media under `content/` should remain ignored except `content/.gitkeep`.
 - Local catalogue/API cache files under `cache/` should remain ignored.
 - Code should remain simple and local-first.
-- Selected frame interpretation must remain manual until an explicit future AI vision step is added.
+- Local and AI frame prefills must preserve existing values by default and remain visibly marked for human review.
 - Python functions, classes, and modules should keep full docstrings.
 - No inline comments unless there is a strong reason.
 
