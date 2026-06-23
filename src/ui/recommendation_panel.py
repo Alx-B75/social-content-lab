@@ -21,10 +21,13 @@ def render_recommendation_panel(
     st.header("4. Model/workflow recommendation")
     answers = normalize_clarifying_answers(answers, project)
     st.session_state.answers = answers
-    if not st.session_state.get("answers_saved"):
+    answers_ready = clarifying_answers_ready(answers, st.session_state.get("answers_saved"))
+    if answers_ready:
+        st.success("Clarifying answers loaded.")
+    else:
         st.warning("Save clarifying answers before generating a recommendation.")
     if st.button("Generate recommendation"):
-        if not st.session_state.get("answers_saved"):
+        if not answers_ready:
             st.warning("Recommendation skipped because clarifying answers have not been saved yet.")
             return st.session_state.get("recommendation")
         recommendation = model_router.recommend(project, sources, answers)
@@ -33,7 +36,10 @@ def render_recommendation_panel(
         recommendation = st.session_state.get("recommendation")
 
     if recommendation is None:
-        st.info("Save clarifying answers, then generate a recommendation.")
+        if answers_ready:
+            st.info("Clarifying answers loaded. Generate a recommendation to continue.")
+        else:
+            st.info("Save clarifying answers, then generate a recommendation.")
         return None
 
     resolved_duration = resolve_duration_seconds(project, answers)
@@ -64,6 +70,11 @@ def render_recommendation_panel(
     st.subheader("Suggested next step")
     st.write(recommendation.suggested_next_step)
     return recommendation
+
+
+def clarifying_answers_ready(answers: ClarifyingAnswers | None, answers_saved: object) -> bool:
+    """Return whether clarifying answers can be used for recommendation."""
+    return bool(answers_saved and answers is not None)
 
 
 def _render_summary_grid(items: list[tuple[str, str]]) -> None:

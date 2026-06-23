@@ -49,7 +49,7 @@ def render_sidebar() -> None:
     recommendation = st.session_state.get("recommendation")
     content_pack = st.session_state.get("content_pack")
     st.sidebar.title("Planning status")
-    if project is None:
+    if not has_loaded_project(project):
         st.sidebar.info("No project yet")
         st.sidebar.write("Current workflow stage: Project setup")
     else:
@@ -82,6 +82,16 @@ def _current_stage(project: object, sources: list[object], answers_saved: bool, 
     if content_pack is None:
         return "Content pack preview"
     return "Save/export files"
+
+
+def has_loaded_project(project: object | None) -> bool:
+    """Return whether the session has a usable loaded project."""
+    return project is not None and bool(getattr(project, "project_id", None))
+
+
+def answers_are_ready(answers: object | None, answers_saved: bool) -> bool:
+    """Return whether clarifying answers are ready for recommendation use."""
+    return bool(answers_saved and answers is not None and hasattr(answers, "model_dump"))
 
 
 def _sidebar_item(label: str, value: str) -> str:

@@ -157,6 +157,25 @@ def _render_generation_section(
     st.write(f"OpenRouter API key configured: {'Yes' if configured else 'No'}")
     if not configured:
         st.info("Add OPENROUTER_API_KEY to `.env` to enable live LLM-assisted drafts. Deterministic generation remains available.")
+    controls_expanded = llm_generation_controls_expanded(status)
+    if not controls_expanded:
+        st.info("Refresh model catalogue first.")
+    with st.expander("Generation controls", expanded=controls_expanded):
+        _render_generation_controls(config, project_service, project, sources, answers, recommendation, status, advisor_recommendation, configured)
+
+
+def _render_generation_controls(
+    config: AppConfig,
+    project_service: ProjectService,
+    project: ContentProject,
+    sources: list[SourceRecord],
+    answers: ClarifyingAnswers,
+    recommendation: WorkflowRecommendation | None,
+    status: dict[str, Any],
+    advisor_recommendation: ModelAdvisorRecommendation | None,
+    configured: bool,
+) -> None:
+    """Render live generation controls once the user expands them."""
     alternate_recommendation = st.session_state.get("openrouter_alternate_recommendation")
     selected_default = (
         alternate_recommendation.selected_model_id
@@ -212,6 +231,11 @@ def _render_generation_section(
     _render_llm_result(result)
     _render_empty_response_recovery(result)
     _render_result_actions(project_service, project, result, advisor_recommendation, status.get("last_refreshed"))
+
+
+def llm_generation_controls_expanded(status: dict[str, Any]) -> bool:
+    """Return whether paid text-generation controls should be expanded by default."""
+    return status.get("availability") == "available" and status.get("freshness") == "fresh"
 
 
 def _render_result_actions(

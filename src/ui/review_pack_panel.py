@@ -122,6 +122,10 @@ def _export_reviewed_pack(project: ContentProject, review_state: ReviewState) ->
             st.warning(warning)
         return
     st.success(f"Final pack exported locally with status: {exported_state.review_status}.")
+    st.markdown("**Project folder**")
+    st.code(str(project.project_path))
+    st.markdown("**Final pack path**")
+    st.code(str(project.project_path / "final-pack.md"))
     st.write("Created: final-brief.md, final-script.md, final-storyboard.md, final-prompts.md, final-captions.md, final-pack.md")
 
 

@@ -36,7 +36,8 @@ def render_content_pack_panel(
         except OSError as error:
             st.error(f"Could not save content pack: {error}")
             return current_pack
-        st.success("Content pack saved to the project folder.")
+        st.success("Content pack saved.")
+        _render_output_location(project, ["brief.md", "script.md", "storyboard.md", "prompts.md", "captions.md"])
 
     if current_pack is None:
         st.info("Generate the content pack to preview and export files.")
@@ -47,13 +48,22 @@ def render_content_pack_panel(
     current_pack = _render_amend_pack_form(content_pack_builder, project, sources, current_pack)
     _render_pack_preview(current_pack, sources)
     st.header("6. Save/export files")
-    st.success("Files are saved locally in the project folder.")
-    st.code(str(project.project_path))
+    st.success("Files are saved locally.")
+    _render_output_location(project, ["brief.md", "script.md", "storyboard.md", "prompts.md", "captions.md", "asset-log.csv", "project.json", "sources/source-index.json"])
     st.write("Created files: brief.md, script.md, storyboard.md, prompts.md, captions.md, asset-log.csv, project.json, sources/source-index.json")
     _render_file_previews(content_pack_builder, project)
     render_llm_planning_panel(content_pack_builder.project_service.config, content_pack_builder.project_service, project, sources, st.session_state.get("answers", answers), recommendation)
     render_review_pack_panel(project)
     return current_pack
+
+
+def _render_output_location(project: ContentProject, filenames: list[str]) -> None:
+    """Render copy-friendly local output path details."""
+    st.markdown("**Project folder**")
+    st.code(str(project.project_path))
+    st.markdown("**Generated files**")
+    for filename in filenames:
+        st.write(f"- {filename}")
 
 
 def _render_amend_pack_form(
@@ -193,7 +203,7 @@ def _render_frame_reference(frame: FrameRecord) -> None:
     """Render one selected frame reference with available description metadata."""
     columns = st.columns([1, 2])
     if frame.absolute_path.exists():
-        columns[0].image(str(frame.absolute_path), caption=frame.file_name, use_container_width=True)
+        columns[0].image(str(frame.absolute_path), caption=frame.file_name, width="stretch")
     else:
         columns[0].write(frame.file_name)
     details = [
@@ -213,7 +223,7 @@ def _render_frame_reference(frame: FrameRecord) -> None:
     for label, value in details:
         if value:
             columns[1].markdown(f"**{label}:** {value}")
-    with st.expander(f"Raw metadata for {frame.file_name}", expanded=False):
+    with st.expander(f"Debug metadata for {frame.file_name}", expanded=False):
         st.json(frame.model_dump(mode="json"))
 
 

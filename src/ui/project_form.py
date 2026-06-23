@@ -13,6 +13,9 @@ def render_project_form(project_service: ProjectService) -> ContentProject | Non
     st.header("1. Project setup")
     existing_project = st.session_state.get("project")
     if existing_project:
+        loaded_message = st.session_state.pop("project_loaded_message", None)
+        if loaded_message:
+            st.success(loaded_message)
         st.success(f"Active project: {existing_project.project_id}")
         st.code(str(existing_project.project_path))
         first_column, second_column, third_column = st.columns(3)
@@ -161,8 +164,8 @@ def _render_project_loader(project_service: ProjectService) -> ContentProject | 
     st.session_state["recommendation"] = None
     st.session_state["answers_saved"] = answers is not None
     st.session_state["pending_inherited_answers"] = None
-    st.success(f"Loaded project: {project.project_id}")
-    return project
+    st.session_state["project_loaded_message"] = f"Loaded project: {project.project_id}"
+    st.rerun()
 
 
 def _render_project_manager(project_service: ProjectService) -> None:
@@ -244,3 +247,4 @@ def _load_project_into_session(project_service: ProjectService, project_id: str)
     st.session_state["answers_saved"] = answers is not None
     st.session_state["pending_inherited_answers"] = None
     st.session_state["project_start_mode"] = "Load saved project"
+    st.session_state["project_loaded_message"] = f"Loaded project: {project.project_id}"

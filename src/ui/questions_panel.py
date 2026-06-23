@@ -19,6 +19,8 @@ def render_questions_panel(
     """Render grouped clarifying questions and return collected answers."""
     st.header("3. Clarifying questions")
     current_answers = normalize_clarifying_answers(current_answers, project)
+    if st.session_state.get("answers_saved"):
+        st.success("Clarifying answers loaded.")
     values = current_answers.model_dump()
     values["resolved_duration_seconds"] = resolve_duration_seconds(project, current_answers)
     values["inferred_aspect_ratio"] = infer_aspect_ratio(values.get("platform"), values.get("output_format"))

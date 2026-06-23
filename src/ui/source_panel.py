@@ -10,6 +10,7 @@ from src.services.frame_prefill import apply_prefill_to_frame, build_local_frame
 from src.services.frame_summary import selected_frame_count
 from src.services.model_advisor import advise_vision_model
 from src.services.openrouter_catalog import (
+    estimate_model_cost_from_catalog,
     fetch_openrouter_models,
     get_model_catalog_status,
     is_router_helper_model_id,
@@ -38,64 +39,86 @@ def render_source_panel(
         st.warning("Create a project before adding sources.")
         return current_sources
     sources = list(current_sources)
-    source_type = st.selectbox("Source type", ["image upload", "video upload", "URL", "pasted text", "manual description"])
-    declared_purpose = st.text_input(
-        "Declared purpose for this source",
-        placeholder="Example: visual style reference, factual context, quote source",
-        key="source_declared_purpose",
-    )
-
-    if source_type == "image upload":
-        uploaded_file = st.file_uploader("Upload image", type=["png", "jpg", "jpeg", "webp"], key="image_upload")
-        if st.button("Add image source", disabled=uploaded_file is None):
-            if uploaded_file is not None:
-                record = source_analyser.add_image_source(project, uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type, declared_purpose or None)
-                _persist_source(source_analyser, project, sources, record)
-                st.success(f"Added image source: {record.source_id}. Asset log updated.")
-
-    if source_type == "video upload":
-        uploaded_file = st.file_uploader("Upload video", type=["mp4", "mov", "webm", "m4v"], key="video_upload")
-        if st.button("Add video source", disabled=uploaded_file is None):
-            if uploaded_file is not None:
-                record = source_analyser.add_video_source(project, uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type, declared_purpose or None)
-                _persist_source(source_analyser, project, sources, record)
-                if record.duration_seconds and record.aspect_ratio:
-                    st.success(f"Added video source: {record.source_id}. Detected {record.duration_seconds:.1f}s at {record.aspect_ratio}. Asset log updated.")
-                else:
-                    st.warning(f"Added video source: {record.source_id}. Video metadata extraction unavailable. Asset log updated.")
-
-    if source_type == "URL":
-        url = st.text_input("URL")
-        if st.button("Add URL source"):
-            if not url.strip():
-                st.error("Enter a URL before adding it.")
-            else:
-                record = source_analyser.add_url_source(url.strip(), declared_purpose or None)
-                _persist_source(source_analyser, project, sources, record)
-                st.success(f"Added URL source: {record.source_id}. Asset log updated.")
-
-    if source_type == "pasted text":
-        pasted_text = st.text_area("Pasted text", height=180)
-        if st.button("Add pasted text source"):
-            if not pasted_text.strip():
-                st.error("Paste text before adding it.")
-            else:
-                record = source_analyser.add_pasted_text_source(project, pasted_text.strip(), declared_purpose or None)
-                _persist_source(source_analyser, project, sources, record)
-                st.success(f"Added pasted text source: {record.source_id}. Asset log updated.")
-
-    if source_type == "manual description":
-        description = st.text_area("Manual description", height=140)
-        if st.button("Add manual description source"):
-            if not description.strip():
-                st.error("Enter a manual description before adding it.")
-            else:
-                record = source_analyser.add_manual_description_source(description.strip(), declared_purpose or None)
-                _persist_source(source_analyser, project, sources, record)
-                st.success(f"Added manual description source: {record.source_id}. Asset log updated.")
-
     _render_source_summary(source_analyser, project, sources)
+    _render_add_source_controls(source_analyser, project, sources)
     return sources
+
+
+def _render_add_source_controls(
+    source_analyser: SourceAnalyser,
+    project: ContentProject,
+    sources: list[SourceRecord],
+) -> None:
+    """Render controls for adding a new source without confusing existing source metadata."""
+    with st.expander("Add new source", expanded=not sources):
+        source_options = ["image upload", "video upload", "URL", "pasted text", "manual description"]
+        source_type = st.selectbox(
+            "New source type",
+            source_options,
+            index=_default_source_type_index(sources, source_options),
+            key="source_type_input",
+        )
+        declared_purpose = st.text_input(
+            "Purpose for this new source",
+            placeholder="Example: visual style reference, factual context, quote source",
+            key="source_declared_purpose",
+        )
+
+        if source_type == "image upload":
+            uploaded_file = st.file_uploader("Upload image", type=["png", "jpg", "jpeg", "webp"], key="image_upload")
+            if st.button("Add image source", disabled=uploaded_file is None):
+                if uploaded_file is not None:
+                    record = source_analyser.add_image_source(project, uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type, declared_purpose or None)
+                    _persist_source(source_analyser, project, sources, record)
+                    st.success(f"Added image source: {record.source_id}. Asset log updated.")
+
+        if source_type == "video upload":
+            uploaded_file = st.file_uploader("Upload video", type=["mp4", "mov", "webm", "m4v"], key="video_upload")
+            if st.button("Add video source", disabled=uploaded_file is None):
+                if uploaded_file is not None:
+                    record = source_analyser.add_video_source(project, uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type, declared_purpose or None)
+                    _persist_source(source_analyser, project, sources, record)
+                    if record.duration_seconds and record.aspect_ratio:
+                        st.success(f"Added video source: {record.source_id}. Detected {record.duration_seconds:.1f}s at {record.aspect_ratio}. Asset log updated.")
+                    else:
+                        st.warning(f"Added video source: {record.source_id}. Video metadata extraction unavailable. Asset log updated.")
+
+        if source_type == "URL":
+            url = st.text_input("URL")
+            if st.button("Add URL source"):
+                if not url.strip():
+                    st.error("Enter a URL before adding it.")
+                else:
+                    record = source_analyser.add_url_source(url.strip(), declared_purpose or None)
+                    _persist_source(source_analyser, project, sources, record)
+                    st.success(f"Added URL source: {record.source_id}. Asset log updated.")
+
+        if source_type == "pasted text":
+            pasted_text = st.text_area("Pasted text", height=180)
+            if st.button("Add pasted text source"):
+                if not pasted_text.strip():
+                    st.error("Paste text before adding it.")
+                else:
+                    record = source_analyser.add_pasted_text_source(project, pasted_text.strip(), declared_purpose or None)
+                    _persist_source(source_analyser, project, sources, record)
+                    st.success(f"Added pasted text source: {record.source_id}. Asset log updated.")
+
+        if source_type == "manual description":
+            description = st.text_area("Manual description", height=140)
+            if st.button("Add manual description source"):
+                if not description.strip():
+                    st.error("Enter a manual description before adding it.")
+                else:
+                    record = source_analyser.add_manual_description_source(description.strip(), declared_purpose or None)
+                    _persist_source(source_analyser, project, sources, record)
+                    st.success(f"Added manual description source: {record.source_id}. Asset log updated.")
+
+
+def _default_source_type_index(sources: list[SourceRecord], source_options: list[str]) -> int:
+    """Return the default source-type index based on saved context."""
+    if any(source.source_type == SourceType.VIDEO for source in sources):
+        return source_options.index("video upload")
+    return source_options.index("image upload")
 
 
 def _persist_source(
@@ -121,12 +144,15 @@ def _render_source_summary(
         st.info("No sources added yet. You can continue with director instructions only.")
         return
 
-    st.subheader("Source index")
+    st.subheader("Existing sources")
+    duplicate_filenames = duplicate_source_filenames(sources)
+    if duplicate_filenames:
+        st.warning("Duplicate filename detected. Use source ID/timestamp to distinguish.")
     for source in sources:
         st.markdown(_source_row(source), unsafe_allow_html=True)
         if source.source_type == SourceType.VIDEO:
             _render_video_frame_tools(source_analyser, project, sources, source)
-        with st.expander(f"Raw metadata for {source.source_id}", expanded=False):
+        with st.expander(f"Debug metadata for {source.source_id}", expanded=False):
             st.json(source.model_dump(mode="json"))
 
 
@@ -134,9 +160,13 @@ def _source_row(source: SourceRecord) -> str:
     """Render a readable source summary row."""
     source_name = source.original_filename or source.url or source.manual_description or source.source_id
     details = [
+        f"Source ID: {source.source_id}",
+        f"Filename: {source.original_filename or 'Not applicable'}",
         f"Type: {source.source_type.value}",
         f"Strategy: {source.strategy.value}",
         f"Size: {_format_file_size(source.file_size_bytes)}",
+        f"Purpose: {source.declared_purpose or 'Not specified'}",
+        f"Created: {source.created_at.isoformat(timespec='seconds')}",
     ]
     if source.aspect_ratio:
         details.append(f"Aspect: {source.aspect_ratio}")
@@ -145,16 +175,24 @@ def _source_row(source: SourceRecord) -> str:
     if source.frame_rate:
         details.append(f"Frame rate: {source.frame_rate:.2f} fps")
     if source.source_type == SourceType.VIDEO:
-        details.append(f"Frames: {source.frame_extraction_status} ({source.frame_count})")
+        details.append(f"Extraction: {source.frame_extraction_status} ({source.frame_count} frames)")
         if source.selected_frame_count:
             details.append(f"Selected: {source.selected_frame_count}")
-    details.append(f"Purpose: {source.declared_purpose or 'Not specified'}")
     return (
         "<div class='scl-source-row'>"
         f"<strong>{html.escape(str(source_name))}</strong><br>"
         f"<span class='scl-muted'>{html.escape(' | '.join(details))}</span>"
         "</div>"
     )
+
+
+def duplicate_source_filenames(sources: list[SourceRecord]) -> set[str]:
+    """Return uploaded filenames that occur more than once."""
+    counts: dict[str, int] = {}
+    for source in sources:
+        if source.original_filename:
+            counts[source.original_filename] = counts.get(source.original_filename, 0) + 1
+    return {filename for filename, count in counts.items() if count > 1}
 
 
 def _format_file_size(file_size_bytes: int | None) -> str:
@@ -177,16 +215,48 @@ def _render_video_frame_tools(
     """Render extraction and frame-selection controls for a video source."""
     metadata_text = _video_metadata_text(source)
     st.caption(metadata_text)
-    if not is_ffmpeg_available() or not is_ffprobe_available():
-        st.warning("Install FFmpeg and make sure ffmpeg/ffprobe are on PATH to enable frame extraction.")
-    if st.button("Extract reference frames", key=f"extract_frames_{source.source_id}"):
-        _extract_frames_for_source(source_analyser, project, sources, source)
     frames = load_frame_index(source.frame_index_path)
+    _render_ffmpeg_diagnostics(show_warning=not frame_extraction_is_complete(source))
+    if frame_extraction_is_complete(source):
+        st.success(f"Frames extracted: {source.frame_count}.")
+        st.info("View/edit extracted frames below.")
+        with st.expander("Re-extract frames", expanded=False):
+            st.warning("Re-extracting frames may overwrite or update frame-index.json for this source.")
+            if st.button("Re-extract frames", key=f"reextract_frames_{source.source_id}"):
+                _extract_frames_for_source(source_analyser, project, sources, source)
+    else:
+        if st.button(frame_extraction_action_label(source), key=f"extract_frames_{source.source_id}"):
+            _extract_frames_for_source(source_analyser, project, sources, source)
     if frames:
         _render_frame_prefill_controls(source_analyser, project, sources, source, frames)
         _render_frame_selection(source_analyser, project, sources, source, frames)
     elif source.frame_extraction_status == "completed":
         st.info("Frame extraction completed, but no frame index was found.")
+
+
+def frame_extraction_is_complete(source: SourceRecord) -> bool:
+    """Return whether a video source has extracted frames ready for review."""
+    return source.frame_extraction_status == "completed" and source.frame_count > 0
+
+
+def frame_extraction_action_label(source: SourceRecord) -> str:
+    """Return the primary frame extraction action label for a source."""
+    if frame_extraction_is_complete(source):
+        return "View/edit extracted frames"
+    if source.frame_extraction_status in {"failed", "unavailable"}:
+        return "Try frame extraction again"
+    return "Extract reference frames"
+
+
+def _render_ffmpeg_diagnostics(show_warning: bool = True) -> None:
+    """Render compact FFmpeg visibility diagnostics for the current process."""
+    ffmpeg_visible = is_ffmpeg_available()
+    ffprobe_visible = is_ffprobe_available()
+    if show_warning and (not ffmpeg_visible or not ffprobe_visible):
+        st.warning("FFmpeg is not visible to this Streamlit process. Restart terminal/VS Code after installing FFmpeg or check PATH.")
+    with st.expander("Video tool diagnostics", expanded=False):
+        st.write(f"ffmpeg visible to this process: {'yes' if ffmpeg_visible else 'no'}")
+        st.write(f"ffprobe visible to this process: {'yes' if ffprobe_visible else 'no'}")
 
 
 def _extract_frames_for_source(
@@ -239,24 +309,33 @@ def _render_frame_selection(
                 st.caption(_frame_prefill_status(frame))
                 columns = st.columns([1, 2])
                 if frame.absolute_path.exists():
-                    columns[0].image(str(frame.absolute_path), caption=_frame_caption(frame), use_container_width=True)
+                    columns[0].image(str(frame.absolute_path), caption=_frame_caption(frame), width="stretch")
                 else:
                     columns[0].warning("Frame file missing.")
                 selected_index = role_options.index(frame.selected_role.value) if frame.selected_role.value in role_options else 0
-                preset = columns[1].selectbox("Fast fill on save", preset_options, key=f"preset_{source.source_id}_{frame.frame_id}")
+                columns[1].markdown("**Quick setup**")
+                preset = columns[1].selectbox(
+                    "Quick preset",
+                    preset_options,
+                    key=f"preset_{source.source_id}_{frame.frame_id}",
+                    help="Applies a preset role/use when you save this frame.",
+                )
                 role_value = columns[1].selectbox("Role", role_options, index=selected_index, key=f"role_{source.source_id}_{frame.frame_id}")
-                notes = columns[1].text_input("Notes", value=frame.notes, key=f"notes_{source.source_id}_{frame.frame_id}")
+                recommended_use = columns[1].text_input("Recommended use", value=frame.recommended_use, key=f"use_{source.source_id}_{frame.frame_id}")
+                st.markdown("**Description**")
                 description = st.text_area("What is visible?", value=frame.description, height=85, key=f"description_{source.source_id}_{frame.frame_id}")
                 detail_columns = st.columns(2)
                 visible_subject = detail_columns[0].text_input("Main subject", value=frame.visible_subject, key=f"subject_{source.source_id}_{frame.frame_id}")
                 setting = detail_columns[1].text_input("Setting/background", value=frame.setting, key=f"setting_{source.source_id}_{frame.frame_id}")
-                mood = detail_columns[0].text_input("Mood/tone", value=frame.mood, key=f"mood_{source.source_id}_{frame.frame_id}")
-                visual_style = detail_columns[1].text_input("Visual style", value=frame.visual_style, key=f"style_{source.source_id}_{frame.frame_id}")
-                on_screen_text = st.text_input("On-screen text, if any", value=frame.on_screen_text, key=f"text_{source.source_id}_{frame.frame_id}")
-                rights_notes = st.text_input("Rights/licensing note", value=frame.rights_notes, key=f"rights_{source.source_id}_{frame.frame_id}")
-                historical_or_brand_risk = st.text_input("Historical or brand risk", value=frame.historical_or_brand_risk, key=f"risk_{source.source_id}_{frame.frame_id}")
-                recommended_use = st.text_input("Recommended use", value=frame.recommended_use, key=f"use_{source.source_id}_{frame.frame_id}")
-                avoid_using_for = st.text_input("Avoid using this frame for", value=frame.avoid_using_for, key=f"avoid_{source.source_id}_{frame.frame_id}")
+                with st.expander("Rights and risk", expanded=False):
+                    on_screen_text = st.text_input("On-screen text, if any", value=frame.on_screen_text, key=f"text_{source.source_id}_{frame.frame_id}")
+                    rights_notes = st.text_input("Rights/licensing note", value=frame.rights_notes, key=f"rights_{source.source_id}_{frame.frame_id}")
+                    historical_or_brand_risk = st.text_input("Historical or brand risk", value=frame.historical_or_brand_risk, key=f"risk_{source.source_id}_{frame.frame_id}")
+                    avoid_using_for = st.text_input("Avoid using this frame for", value=frame.avoid_using_for, key=f"avoid_{source.source_id}_{frame.frame_id}")
+                with st.expander("Advanced notes", expanded=False):
+                    notes = st.text_input("Notes", value=frame.notes, key=f"notes_{source.source_id}_{frame.frame_id}")
+                    mood = st.text_input("Mood/tone", value=frame.mood, key=f"mood_{source.source_id}_{frame.frame_id}")
+                    visual_style = st.text_input("Visual style", value=frame.visual_style, key=f"style_{source.source_id}_{frame.frame_id}")
                 updated_frame = frame.model_copy(
                     update={
                         "selected_role": FrameRole(role_value),
@@ -306,7 +385,7 @@ def _render_frame_prefill_controls(
         key=f"local_prefill_frame_{source.source_id}",
     )
     local_columns = st.columns(2)
-    if local_columns[0].button("Prefill current frame", key=f"prefill_current_{source.source_id}"):
+    if local_columns[0].button("Prefill and save current frame", key=f"prefill_current_{source.source_id}"):
         frame_id = frame_options[selected_local_label]
         updated = [
             apply_prefill_to_frame(
@@ -319,9 +398,9 @@ def _render_frame_prefill_controls(
             for frame in frames
         ]
         _save_prefilled_frames(source_analyser, project, sources, source, updated)
-        st.success("Local frame prefill saved. Review the suggestions before publication.")
+        st.success("Prefill saved to frame-index.json. Review the suggestions before publication.")
         st.rerun()
-    if local_columns[1].button("Prefill all frames", key=f"prefill_all_{source.source_id}"):
+    if local_columns[1].button("Prefill and save all empty frame fields", key=f"prefill_all_{source.source_id}"):
         updated = prefill_missing_frame_fields(
             frames,
             source,
@@ -330,7 +409,7 @@ def _render_frame_prefill_controls(
             replace_existing=replace_local,
         )
         _save_prefilled_frames(source_analyser, project, sources, source, updated)
-        st.success("Local frame prefill saved. Review the suggestions before publication.")
+        st.success("Prefill saved to frame-index.json. Review the suggestions before publication.")
         st.rerun()
     _render_ai_frame_prefill(source_analyser, project, sources, source, frames, frame_options)
 
@@ -398,6 +477,11 @@ def _render_ai_frame_prefill(
             step=100,
             key=f"vision_tokens_{source.source_id}",
         )
+        cost_message, cost_is_warning = vision_cost_notice(status, matched_model, len(selected_labels), int(max_tokens))
+        if cost_is_warning:
+            st.warning(cost_message)
+        else:
+            st.info(cost_message)
         replace_ai = st.checkbox(
             "Replace existing values with AI suggestions",
             value=False,
@@ -447,6 +531,25 @@ def _render_ai_frame_prefill(
                 st.error(failure)
             if successes:
                 st.rerun()
+
+
+def vision_cost_notice(status: dict[str, object], model: dict[str, object] | None, frame_count: int, max_tokens: int) -> tuple[str, bool]:
+    """Return a pre-consent AI vision cost notice and whether it is a warning."""
+    if status.get("freshness") != "fresh" or status.get("availability") != "available":
+        return "Cost estimate unavailable or stale. Refresh model catalogue before using paid analysis.", True
+    if model is None:
+        return "Cost estimate unavailable for this selected model. Refresh model catalogue before using paid analysis.", True
+    if frame_count <= 0:
+        return "Select extracted frames to see a rough paid-analysis estimate.", False
+    estimate = estimate_model_cost_from_catalog(model, input_tokens=800 * frame_count, output_tokens=max_tokens * frame_count)
+    image_price = model.get("pricing_image")
+    image_cost = float(image_price or 0.0) * frame_count if image_price is not None else 0.0
+    if not estimate["pricing_available"] and image_price is None:
+        return "Cost estimate unavailable for this selected model. Refresh model catalogue before using paid analysis.", True
+    token_cost = float(estimate["estimated_cost"] or 0.0)
+    total_cost = token_cost + image_cost
+    cost_band = estimate["cost_band"] if estimate["pricing_available"] else "unknown"
+    return f"Rough estimate for {frame_count} frame(s): ${total_cost:.6f} ({cost_band}).", False
 
 
 def _save_prefilled_frames(
