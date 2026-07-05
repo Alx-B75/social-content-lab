@@ -59,6 +59,29 @@ Selections, reviewer notes, export history, and status (`draft`, `needs_review`,
 
 Review state and final outputs remain under the project's ignored `content/` folder. Export is blocked when selected text contains secret-like values, absolute local paths, or local media/cache paths.
 
+## Generate Video MVP
+
+The app includes a controlled `Generate Video` section downstream of the content/review workflow. It can discover prompt sources in this order: `final-prompts.md`, `prompts.llm.md`, `prompts.md`, then a custom prompt entered in the UI.
+
+The workflow analyses the reviewed prompt, selected extracted frame references, duration, aspect ratio, risk notes, and user preference (`cheapest sensible`, `balanced`, or `quality-first`). A video model/provider advisor recommends a generation route and provider/model instead of using a static provider dropdown.
+
+For the MVP, the only implemented provider is a mock local provider:
+
+- It can exercise text-to-video and image-to-video workflow paths without paid calls.
+- It attempts to create a local placeholder MP4 with FFmpeg when available.
+- If MP4 creation is not practical, it saves metadata only with `mock_completed_no_video`.
+- It does not create real provider-generated video.
+
+Real video provider integrations are not configured yet. Future paid/remote providers must require explicit user consent before sending prompts or a selected reference image, and must never receive uploaded full videos, absolute local paths, API keys, or secrets.
+
+Generated video outputs and metadata are saved under:
+
+```text
+content/<project-id>/outputs/video/
+```
+
+Generated videos, uploaded media, project outputs, caches, logs, and local secrets remain ignored by Git. Every generated video asset is logged in `asset-log.csv` as requiring human review before publication.
+
 ## Optional FFmpeg Support
 
 FFmpeg is optional but recommended for video source planning. When `ffmpeg` and `ffprobe` are available on PATH, Social Content Lab can read basic video metadata and extract local reference frames from uploaded videos.
@@ -84,7 +107,7 @@ Manual, local, and reviewed AI descriptions feed into the deterministic content 
 
 ## What Is Not Implemented Yet
 
-The app does not perform paid image/video/media generation, URL scraping, full video parsing, audio transcription, OCR, authentication, database storage, deployment, or platform publishing. OpenRouter text planning and explicitly consented selected-frame vision prefill are the only live model call paths.
+The app does not perform paid image/video/media generation, URL scraping, full video parsing, audio transcription, OCR, authentication, database storage, deployment, or platform publishing. OpenRouter text planning and explicitly consented selected-frame vision prefill are the only live model call paths. Generate Video is currently mock-only unless a real provider integration is added later.
 
 ## Future Roadmap
 

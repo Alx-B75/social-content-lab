@@ -64,11 +64,16 @@ requirements.txt        Python dependencies
 - Compares deterministic and LLM-assisted pack sections side by side.
 - Persists section selections, custom text, reviewer notes, status, and export history in `review-state.json`.
 - Exports attributed final section files and a combined `final-pack.md` without modifying source packs.
+- Provides a downstream `Generate Video` section for reviewed prompt selection, video route/provider/model recommendation, explicit consent controls, mock/local generation, output metadata, and generated video asset logging.
+- Recommends image-to-video when selected positive extracted frame references exist, and text-to-video when no suitable frame reference exists.
+- Includes a mock local video provider that can test the full workflow without paid calls and without sending data to a remote provider.
+- Saves generated video outputs and metadata under `content/<project-id>/outputs/video/` using versioned filenames.
 
 ## Intentionally Not Implemented Yet
 
 - Paid image/video/media generation
 - fal.ai or Replicate integration
+- Real remote video generation provider calls
 - URL scraping
 - Automatic or unconsented vision analysis
 - Sending original videos or uploaded source media to vision models
@@ -101,6 +106,27 @@ OPENROUTER_CATALOG_CACHE_PATH=cache/openrouter-model-catalog.json
 The model catalogue cache is local and ignored by Git. Catalogue data is considered fresh for 24 hours, stale from 24 hours to 7 days, and very stale after 7 days. Cost estimates and model recommendations depend on catalogue freshness.
 
 Text-planning calls do not send uploaded media, extracted frames, absolute local paths, API keys, or secrets. Optional vision prefill sends only the extracted frame images explicitly selected by the user plus safe project text after consent. It never sends original videos, uploaded source files, absolute local paths, or secrets. All model output must be reviewed before publication.
+
+## Generate Video MVP
+
+The `Generate Video` section is located downstream of content-pack and review controls. It discovers prompt sources in priority order:
+
+```text
+final-prompts.md
+prompts.llm.md
+prompts.md
+custom prompt
+```
+
+The video model/provider advisor inspects reviewed prompt availability, selected frame references, platform/format, duration, aspect ratio, project objective, tone/style and avoidances, risk profile, user preference, and provider/model capability metadata.
+
+Image-to-video is recommended by default when selected positive frame references are available because a frame can help preserve visual and brand consistency. Text-to-video is the fallback when no suitable frame exists. For Shakespeare or other historical/likeness-sensitive projects, the advisor warns that pure text-to-video can drift toward fantasy or generic historical imagery.
+
+The only implemented provider is `mock/local-placeholder`. It supports both text-to-video and image-to-video workflow paths for safe local testing. It attempts to create a placeholder MP4 with FFmpeg; if that is unavailable or fails, it saves metadata only with `mock_completed_no_video`. Real provider options are represented as unconfigured future-provider capability records only.
+
+Generated video metadata includes provider, model, mode, prompt source, prompt hash/summary, reference frame IDs when used, duration, aspect ratio, timestamp, status, cost when known, relative output path, warnings, advisor summary, provider payload, and `human_review_required: true`.
+
+The normal UI shows relative paths and frame labels. Provider payloads exclude API keys, secret-like values, absolute local paths, and uploaded full video paths. Future paid/remote providers must require explicit consent before prompts or selected reference frame images are sent. Generated video asset-log rows use `source_or_generated = generated_video`, `keep_reject = needs_review`, and `historical_or_brand_risk = needs_review`.
 
 ## Review And Final Pack
 
@@ -153,6 +179,10 @@ If FFmpeg is unavailable, the app still runs and stores video sources, but frame
 - OpenRouter should be described as the router/provider; the selected model should be described as the text generator.
 - Text-planning calls must not send uploaded media or extracted frames to OpenRouter.
 - Vision prefill may send only explicitly selected extracted frame images after user consent; original videos and uploaded source media must never be sent.
+- Video generation is mock-only in the current implementation. Future real video providers must require explicit user consent before any remote or paid call.
+- Image-to-video may send only one selected extracted frame reference image to a future provider; full uploaded videos must never be sent.
+- Video provider payloads must not include absolute local paths, API keys, secrets, or full uploaded video paths.
+- Generated video output always requires human review before publication.
 - Generated content and uploaded media under `content/` should remain ignored except `content/.gitkeep`.
 - Local catalogue/API cache files under `cache/` should remain ignored.
 - Code should remain simple and local-first.
@@ -162,11 +192,10 @@ If FFmpeg is unavailable, the app still runs and stores video sources, but frame
 
 ## Next Recommended Development Steps
 
-1. Add lightweight tests for project creation, source analysis, routing, and content pack writing.
-2. Add a project loader so existing local projects can be reopened from `content/`.
-3. Add safer file-size checks and extension validation for uploads.
-4. Improve source summaries for pasted text and manual descriptions while staying local-only.
-5. Add a simple asset scoring workflow in `asset-log.csv`.
-6. Add export-oriented views for CapCut, Canva, Premiere, and DaVinci Resolve handoff.
-7. Add optional OCR or transcription as local-first tools if needed.
-8. Expand OpenRouter planning workflows behind explicit user-triggered actions and rough cost warnings.
+1. Add a real video provider integration behind explicit consent and safe provider payload tests.
+2. Add safer file-size checks and extension validation for uploads.
+3. Improve source summaries for pasted text and manual descriptions while staying local-only.
+4. Add a simple asset scoring workflow in `asset-log.csv`.
+5. Add export-oriented views for CapCut, Canva, Premiere, and DaVinci Resolve handoff.
+6. Add optional OCR or transcription as local-first tools if needed.
+7. Expand OpenRouter planning workflows behind explicit user-triggered actions and rough cost warnings.
