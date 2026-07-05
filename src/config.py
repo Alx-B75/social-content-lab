@@ -17,6 +17,7 @@ class AppConfig(BaseModel):
     openrouter_app_name: str = "Social Content Lab"
     openrouter_default_model: str | None = Field(default=None)
     openrouter_catalog_cache_path: Path
+    openrouter_video_catalog_cache_path: Path
     fal_key: str | None = Field(default=None)
     replicate_api_token: str | None = Field(default=None)
     elevenlabs_api_key: str | None = Field(default=None)
@@ -33,6 +34,7 @@ class AppConfig(BaseModel):
             openrouter_app_name=os.getenv("OPENROUTER_APP_NAME") or "Social Content Lab",
             openrouter_default_model=os.getenv("OPENROUTER_DEFAULT_MODEL") or None,
             openrouter_catalog_cache_path=root_path / (os.getenv("OPENROUTER_CATALOG_CACHE_PATH") or "cache/openrouter-model-catalog.json"),
+            openrouter_video_catalog_cache_path=root_path / (os.getenv("OPENROUTER_VIDEO_CATALOG_CACHE_PATH") or "cache/openrouter-video-model-catalog.json"),
             fal_key=os.getenv("FAL_KEY") or None,
             replicate_api_token=os.getenv("REPLICATE_API_TOKEN") or None,
             elevenlabs_api_key=os.getenv("ELEVENLABS_API_KEY") or None,

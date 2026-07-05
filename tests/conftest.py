@@ -17,6 +17,7 @@ def app_config(tmp_path: Path) -> AppConfig:
         template_path=tmp_path / "templates",
         openrouter_api_key=None,
         openrouter_catalog_cache_path=tmp_path / "cache" / "openrouter-model-catalog.json",
+        openrouter_video_catalog_cache_path=tmp_path / "cache" / "openrouter-video-model-catalog.json",
     )
 
 

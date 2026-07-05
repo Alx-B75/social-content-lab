@@ -65,14 +65,25 @@ The app includes a controlled `Generate Video` section downstream of the content
 
 The workflow analyses the reviewed prompt, selected extracted frame references, duration, aspect ratio, risk notes, and user preference (`cheapest sensible`, `balanced`, or `quality-first`). A video model/provider advisor recommends a generation route and provider/model instead of using a static provider dropdown.
 
-For the MVP, the only implemented provider is a mock local provider:
+The mock local provider remains available for safe testing:
 
 - It can exercise text-to-video and image-to-video workflow paths without paid calls.
 - It attempts to create a local placeholder MP4 with FFmpeg when available.
 - If MP4 creation is not practical, it saves metadata only with `mock_completed_no_video`.
 - It does not create real provider-generated video.
 
-Real video provider integrations are not configured yet. Future paid/remote providers must require explicit user consent before sending prompts or a selected reference image, and must never receive uploaded full videos, absolute local paths, API keys, or secrets.
+OpenRouter is the intended routing layer for real video generation where OpenRouter supports the needed modality. When `OPENROUTER_API_KEY` is configured, the app can refresh a dedicated OpenRouter video model catalogue from `GET /api/v1/videos/models`, cache it locally, recommend OpenRouter-routed video models, submit a real job through `POST /api/v1/videos`, poll status, download the completed MP4, and save local metadata.
+
+Real OpenRouter video generation can spend credits. The UI includes:
+
+- A `Low-risk OpenRouter video smoke test` preset for a five-second text-to-video validation clip with no people, faces, logos, readable text, or copyrighted characters.
+- A request preview showing provider/model, mode, prompt source, duration, aspect/resolution, whether a selected reference frame will be sent, and estimated cost or cost unknown.
+- A default max test spend of `$1.00`.
+- Blocking when known estimated cost exceeds the max spend.
+- An extra acknowledgement when cost is unknown.
+- Explicit confirmation before submitting a real OpenRouter video job.
+
+Image-to-video may send only the selected extracted frame image after explicit consent and only when the selected OpenRouter model advertises frame-image support. Full uploaded videos, absolute local paths, API keys, and secrets are never sent in provider payload previews or normal metadata.
 
 Generated video outputs and metadata are saved under:
 
@@ -107,7 +118,7 @@ Manual, local, and reviewed AI descriptions feed into the deterministic content 
 
 ## What Is Not Implemented Yet
 
-The app does not perform paid image/video/media generation, URL scraping, full video parsing, audio transcription, OCR, authentication, database storage, deployment, or platform publishing. OpenRouter text planning and explicitly consented selected-frame vision prefill are the only live model call paths. Generate Video is currently mock-only unless a real provider integration is added later.
+The app does not perform direct Runway/Pika/Kling/etc. integration, URL scraping, full video parsing, audio transcription, OCR, authentication, database storage, deployment, or platform publishing. OpenRouter text planning, explicitly consented selected-frame vision prefill, and explicitly consented OpenRouter-routed video generation are the only live model call paths.
 
 ## Future Roadmap
 

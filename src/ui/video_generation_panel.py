@@ -4,9 +4,16 @@ import json
 
 import streamlit as st
 
+from src.config import AppConfig
 from src.models.planning import ClarifyingAnswers, ContentPack
 from src.models.project import ContentProject
 from src.models.source import FrameRecord, SourceRecord
+from src.services.openrouter_video import (
+    fetch_openrouter_video_models,
+    get_video_model_catalog_status,
+    openrouter_request_preview,
+    save_video_model_catalog_cache,
+)
 from src.services.video_generation import (
     VideoGenerationRequest,
     default_negative_prompt,
@@ -19,8 +26,18 @@ from src.services.video_generation import (
 from src.services.video_generation_providers import IMAGE_TO_VIDEO, TEXT_TO_VIDEO, collect_video_model_capabilities, default_video_providers
 from src.services.video_model_advisor import manual_override_warnings, recommend_video_model
 
+LOW_RISK_OPENROUTER_VIDEO_SMOKE_TEST = {
+    "title": "Low-risk OpenRouter video smoke test",
+    "prompt": "A calm five-second cinematic shot of a dark teal background with soft moving light, subtle dust particles, premium educational brand atmosphere, no people, no readable text.",
+    "negative_prompt": "people, faces, readable text, logos, copyrighted characters, violent imagery, fantasy style, cheap AI look",
+    "duration_seconds": 5,
+    "mode": TEXT_TO_VIDEO,
+    "preference": "cheapest sensible",
+}
+
 
 def render_video_generation_panel(
+    config: AppConfig,
     project: ContentProject,
     sources: list[SourceRecord],
     answers: ClarifyingAnswers | None,
@@ -30,11 +47,15 @@ def render_video_generation_panel(
     st.header("Generate Video")
     st.caption("Controlled MVP for reviewed prompts, selected frame references, model recommendation, explicit consent, and local output logging.")
 
-    capabilities = collect_video_model_capabilities()
+    video_catalog_status = _render_openrouter_catalog_controls(config)
+    video_catalog = video_catalog_status.get("catalog") if video_catalog_status else None
+    providers = default_video_providers(config, video_catalog)
+    capabilities = collect_video_model_capabilities(providers)
     if not any(capability.configured and capability.implemented and not capability.is_mock for capability in capabilities):
         st.info("Real video provider not configured yet.")
 
-    custom_prompt = st.text_area("Custom prompt", "", height=120)
+    _render_smoke_test_preset()
+    custom_prompt = st.text_area("Custom prompt", key="video_custom_prompt", height=120)
     prompt_sources = discover_video_prompt_sources(project, custom_prompt)
     if not prompt_sources:
         st.warning("No prompt source found yet. Export final prompts, generate a prompt pack, or enter a custom prompt.")
@@ -50,19 +71,24 @@ def render_video_generation_panel(
     default_mode = default_video_generation_mode(selected_frames)
     mode_labels = ["image-to-video", "text-to-video"]
     mode_values = [IMAGE_TO_VIDEO, TEXT_TO_VIDEO]
-    mode_label = st.radio("Generation mode", mode_labels, index=mode_values.index(default_mode), horizontal=True)
+    preferred_mode = st.session_state.get("video_generation_mode", default_mode)
+    mode_label = st.radio("Generation mode", mode_labels, index=mode_values.index(preferred_mode if preferred_mode in mode_values else default_mode), horizontal=True)
     mode = mode_values[mode_labels.index(mode_label)]
 
     reference_frame = _render_reference_frame_selector(selected_frames) if mode == IMAGE_TO_VIDEO else None
     if mode == IMAGE_TO_VIDEO and reference_frame is None:
         st.warning("Image-to-video needs one selected frame reference. Switch to text-to-video or select/review frames first.")
 
-    duration_default = _default_duration(content_pack, answers)
+    duration_default = int(st.session_state.get("video_duration_seconds", _default_duration(content_pack, answers)))
     duration_seconds = st.number_input("Duration seconds", min_value=1, max_value=30, value=duration_default, step=1)
     aspect_ratio = st.selectbox("Aspect ratio", ["9:16", "1:1", "16:9", "4:5"], index=_aspect_index(_default_aspect_ratio(content_pack, answers)))
-    negative_prompt = st.text_area("Negative prompt", default_negative_prompt(content_pack.risk_notes if content_pack else [], answers.avoid_aesthetics if answers else None), height=100)
+    if "video_negative_prompt" not in st.session_state:
+        st.session_state["video_negative_prompt"] = default_negative_prompt(content_pack.risk_notes if content_pack else [], answers.avoid_aesthetics if answers else None)
+    negative_prompt = st.text_area("Negative prompt", key="video_negative_prompt", height=100)
 
-    preference = st.selectbox("User preference", ["cheapest sensible", "balanced", "quality-first"], index=1)
+    preference_options = ["cheapest sensible", "balanced", "quality-first"]
+    preferred_preference = st.session_state.get("video_user_preference", "balanced")
+    preference = st.selectbox("User preference", preference_options, index=preference_options.index(preferred_preference if preferred_preference in preference_options else "balanced"))
     recommendation_key = f"video_generation_recommendation_{project.project_id}"
     if st.button("Recommend video model"):
         st.session_state[recommendation_key] = recommend_video_model(
@@ -93,11 +119,31 @@ def render_video_generation_panel(
         st.info("Mock provider selected. It does not create a real provider-generated video and does not spend money.")
     else:
         st.warning("This may send prompts and selected reference images to the selected video model/provider and may incur cost.")
-    consent_checked = st.checkbox(
-        "I understand this may incur cost and may send selected inputs to the provider.",
-        disabled=selected_capability.is_mock,
+    max_spend_usd = st.number_input("Max test spend USD", min_value=0.01, max_value=25.0, value=1.0, step=0.25, disabled=selected_capability.is_mock)
+    preview_request = VideoGenerationRequest(
+        provider_name=selected_capability.provider_name,
+        model_name=selected_capability.model_name,
+        mode=mode,
+        prompt_source_label=prompt_source.label,
+        prompt_source_id=prompt_source.source_id,
+        prompt=prompt_source.text,
+        negative_prompt=negative_prompt,
+        reference_frame=reference_frame,
+        duration_seconds=int(duration_seconds),
+        aspect_ratio=aspect_ratio,
+        max_spend_usd=float(max_spend_usd),
+    )
+    preview = openrouter_request_preview(preview_request, selected_capability, float(max_spend_usd))
+    _render_request_preview(preview)
+    unknown_cost_acknowledged = st.checkbox(
+        "I understand the cost estimate is unavailable.",
+        disabled=selected_capability.is_mock or preview["cost_estimate_confidence"] == "known",
         value=False,
     )
+    consent_label = "I understand this will submit a real video generation request through OpenRouter and may spend credits."
+    if selected_capability.provider_name != "openrouter":
+        consent_label = "I understand this may incur cost and may send selected inputs to the provider."
+    consent_checked = st.checkbox(consent_label, disabled=selected_capability.is_mock, value=False)
 
     request = VideoGenerationRequest(
         provider_name=selected_capability.provider_name,
@@ -111,16 +157,19 @@ def render_video_generation_panel(
         duration_seconds=int(duration_seconds),
         aspect_ratio=aspect_ratio,
         consent_checked=consent_checked,
+        max_spend_usd=float(max_spend_usd),
+        unknown_cost_acknowledged=unknown_cost_acknowledged,
     )
     blocking_errors = validate_video_generation_request(request, selected_capability)
     for error in blocking_errors:
         st.error(error)
-    if st.button("Generate video", disabled=bool(blocking_errors)):
+    button_label = "Generate real video via OpenRouter" if selected_capability.provider_name == "openrouter" else "Generate video"
+    if st.button(button_label, disabled=bool(blocking_errors)):
         result = generate_video_asset(
             project=project,
             request=request,
             advisor_recommendation=recommendation,
-            providers=default_video_providers(),
+            providers=providers,
             capabilities=capabilities,
         )
         if result.status == "failed":
@@ -129,9 +178,67 @@ def render_video_generation_panel(
             st.success(f"Video generation status: {result.status}")
         if result.output_path:
             st.write(f"Output: `{result.output_path.relative_to(project.project_path).as_posix()}`")
+        st.write(f"Job/status: `{result.provider_job_id or result.status}`")
         st.write(f"Metadata: `{result.metadata_path.relative_to(project.project_path).as_posix()}`")
+        metadata = json.loads(result.metadata_path.read_text(encoding="utf-8"))
+        actual_cost = metadata.get("actual_cost")
+        if actual_cost is not None and result.provider == "openrouter":
+            st.write(f"Actual OpenRouter usage cost: ${float(actual_cost):.6f}")
         with st.expander("Debug metadata", expanded=False):
-            st.json(json.loads(result.metadata_path.read_text(encoding="utf-8")))
+            st.json(metadata)
+
+
+def _render_openrouter_catalog_controls(config: AppConfig) -> dict[str, object]:
+    """Render OpenRouter video catalogue status and refresh control."""
+    with st.expander("OpenRouter video models", expanded=False):
+        if not config.openrouter_api_key:
+            st.info("Set OPENROUTER_API_KEY to enable OpenRouter video model discovery and real video tests.")
+        status = get_video_model_catalog_status(config.openrouter_video_catalog_cache_path)
+        st.write(f"Catalogue: {status['availability']} / {status['freshness']} / {status['model_count']} model(s)")
+        if status.get("warning"):
+            st.warning(str(status["warning"]))
+        if st.button("Refresh OpenRouter video models", disabled=not bool(config.openrouter_api_key)):
+            catalog = fetch_openrouter_video_models(config)
+            save_video_model_catalog_cache(config.openrouter_video_catalog_cache_path, catalog)
+            if catalog.get("fetch_status") == "ok":
+                st.success(f"Refreshed {catalog.get('model_count', 0)} OpenRouter video model(s).")
+            else:
+                st.error(f"OpenRouter video catalogue refresh failed: {catalog.get('error_summary', 'unknown error')}")
+            st.rerun()
+    return status
+
+
+def _render_smoke_test_preset() -> None:
+    """Render the low-risk OpenRouter smoke-test preset."""
+    if st.button("Use low-risk OpenRouter video smoke test"):
+        st.session_state["video_custom_prompt"] = LOW_RISK_OPENROUTER_VIDEO_SMOKE_TEST["prompt"]
+        st.session_state["video_negative_prompt"] = LOW_RISK_OPENROUTER_VIDEO_SMOKE_TEST["negative_prompt"]
+        st.session_state["video_duration_seconds"] = LOW_RISK_OPENROUTER_VIDEO_SMOKE_TEST["duration_seconds"]
+        st.session_state["video_generation_mode"] = LOW_RISK_OPENROUTER_VIDEO_SMOKE_TEST["mode"]
+        st.session_state["video_user_preference"] = LOW_RISK_OPENROUTER_VIDEO_SMOKE_TEST["preference"]
+        st.rerun()
+
+
+def _render_request_preview(preview: dict[str, object]) -> None:
+    """Render a safe request preview before generation."""
+    with st.expander("Request preview", expanded=True):
+        st.write(f"Provider/model: `{preview['provider']}/{preview['model']}`")
+        st.write(f"Mode: `{str(preview['mode']).replace('_', '-')}`")
+        st.write(f"Prompt source: {preview['prompt_source']}")
+        st.write(f"Duration: {preview['duration_seconds']} seconds")
+        st.write(f"Aspect/resolution: {preview['aspect_ratio']} / {preview.get('resolution') or 'default'}")
+        st.write(f"Reference frame will be sent: {'yes' if preview['reference_frame_will_be_sent'] else 'no'}")
+        st.write(f"Negative prompt will be sent: {'yes' if preview['negative_prompt_will_be_sent'] else 'no'}")
+        if preview["cost_estimate_confidence"] == "known":
+            st.write(f"Estimated cost: ${float(preview['estimated_cost']):.4f} ({preview['cost_band']})")
+        else:
+            st.warning(str(preview["cost_estimate_note"]))
+            if preview.get("pricing_hint") is not None:
+                st.write(f"Catalogue pricing hint: {preview['pricing_hint']} ({preview['cost_band']})")
+        st.write(f"Max test spend: ${float(preview['max_spend_usd']):.2f}")
+        if not preview["spend_guard_passed"]:
+            st.error("Estimated cost exceeds max test spend.")
+        _write_list("Inputs that would be sent", list(preview.get("inputs_sent") or []))
 
 
 def _render_reference_frame_selector(frames: list[FrameRecord]) -> FrameRecord | None:

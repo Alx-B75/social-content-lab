@@ -8,6 +8,8 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
 
+from src.config import AppConfig
+
 
 VideoGenerationMode = str
 TEXT_TO_VIDEO = "text_to_video"
@@ -24,9 +26,15 @@ class VideoModelCapability(BaseModel):
     supports_reference_image: bool = False
     supported_durations_seconds: list[int] = Field(default_factory=list)
     supported_aspect_ratios: list[str] = Field(default_factory=list)
+    supported_resolutions: list[str] = Field(default_factory=list)
+    supported_sizes: list[str] = Field(default_factory=list)
+    supported_frame_images: list[str] = Field(default_factory=list)
     output_download_supported: bool = True
     pricing_known: bool = False
+    estimated_cost: float | None = None
     estimated_cost_band: str = "unknown"
+    cost_estimate_confidence: str = "unavailable"
+    cost_estimate_note: str = "Cost estimate unavailable."
     configured: bool = False
     implemented: bool = False
     is_mock: bool = False
@@ -34,6 +42,7 @@ class VideoModelCapability(BaseModel):
     price_rank: int = 3
     reliability: str = "unknown"
     known_limitations: list[str] = Field(default_factory=list)
+    capability_metadata: dict[str, Any] = Field(default_factory=dict)
 
     @property
     def provider_model_id(self) -> str:
@@ -195,9 +204,9 @@ class UnconfiguredVideoProvider:
         )
 
 
-def default_video_providers() -> list[VideoGenerationProvider]:
+def default_video_providers(config: AppConfig | None = None, openrouter_video_catalog: dict[str, Any] | None = None) -> list[VideoGenerationProvider]:
     """Return the MVP provider registry."""
-    return [
+    providers: list[VideoGenerationProvider] = [
         MockLocalVideoProvider(),
         UnconfiguredVideoProvider(
             VideoModelCapability(
@@ -238,6 +247,11 @@ def default_video_providers() -> list[VideoGenerationProvider]:
             )
         ),
     ]
+    if config and config.openrouter_api_key:
+        from src.services.openrouter_video import OpenRouterVideoProvider
+
+        providers.append(OpenRouterVideoProvider(config, openrouter_video_catalog))
+    return providers
 
 
 def collect_video_model_capabilities(providers: list[VideoGenerationProvider] | None = None) -> list[VideoModelCapability]:

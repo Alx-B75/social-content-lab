@@ -67,13 +67,15 @@ requirements.txt        Python dependencies
 - Provides a downstream `Generate Video` section for reviewed prompt selection, video route/provider/model recommendation, explicit consent controls, mock/local generation, output metadata, and generated video asset logging.
 - Recommends image-to-video when selected positive extracted frame references exist, and text-to-video when no suitable frame reference exists.
 - Includes a mock local video provider that can test the full workflow without paid calls and without sending data to a remote provider.
+- Can refresh and cache OpenRouter video generation models from the dedicated video model endpoint when `OPENROUTER_API_KEY` is configured.
+- Can recommend and submit an explicitly consented OpenRouter-routed video job, poll status, download the completed MP4, save metadata, and log the generated video asset.
+- Includes request preview, max test spend, unknown-cost acknowledgement, and real-call consent controls before OpenRouter video generation.
 - Saves generated video outputs and metadata under `content/<project-id>/outputs/video/` using versioned filenames.
 
 ## Intentionally Not Implemented Yet
 
-- Paid image/video/media generation
+- Direct paid image/video/media provider integrations outside OpenRouter
 - fal.ai or Replicate integration
-- Real remote video generation provider calls
 - URL scraping
 - Automatic or unconsented vision analysis
 - Sending original videos or uploaded source media to vision models
@@ -101,6 +103,7 @@ OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 OPENROUTER_APP_NAME=Social Content Lab
 OPENROUTER_DEFAULT_MODEL=
 OPENROUTER_CATALOG_CACHE_PATH=cache/openrouter-model-catalog.json
+OPENROUTER_VIDEO_CATALOG_CACHE_PATH=cache/openrouter-video-model-catalog.json
 ```
 
 The model catalogue cache is local and ignored by Git. Catalogue data is considered fresh for 24 hours, stale from 24 hours to 7 days, and very stale after 7 days. Cost estimates and model recommendations depend on catalogue freshness.
@@ -118,15 +121,25 @@ prompts.md
 custom prompt
 ```
 
-The video model/provider advisor inspects reviewed prompt availability, selected frame references, platform/format, duration, aspect ratio, project objective, tone/style and avoidances, risk profile, user preference, and provider/model capability metadata.
+The video model/provider advisor inspects reviewed prompt availability, selected frame references, platform/format, duration, aspect ratio, project objective, tone/style and avoidances, risk profile, user preference, and provider/model capability metadata. OpenRouter is the intended routing layer for real video generation where OpenRouter supports the requested modality.
 
 Image-to-video is recommended by default when selected positive frame references are available because a frame can help preserve visual and brand consistency. Text-to-video is the fallback when no suitable frame exists. For Shakespeare or other historical/likeness-sensitive projects, the advisor warns that pure text-to-video can drift toward fantasy or generic historical imagery.
 
-The only implemented provider is `mock/local-placeholder`. It supports both text-to-video and image-to-video workflow paths for safe local testing. It attempts to create a placeholder MP4 with FFmpeg; if that is unavailable or fails, it saves metadata only with `mock_completed_no_video`. Real provider options are represented as unconfigured future-provider capability records only.
+The mock provider `mock/local-placeholder` supports both text-to-video and image-to-video workflow paths for safe local testing. It attempts to create a placeholder MP4 with FFmpeg; if that is unavailable or fails, it saves metadata only with `mock_completed_no_video`.
+
+When an OpenRouter API key is configured, the app can refresh a dedicated video catalogue from `GET /api/v1/videos/models`, cache it under `cache/openrouter-video-model-catalog.json`, and convert supported video models into provider/model capabilities. The real provider implementation submits `POST /api/v1/videos`, polls the returned job or polling URL, downloads the generated content endpoint when complete, and writes the MP4 locally.
+
+The UI includes a `Low-risk OpenRouter video smoke test` preset:
+
+```text
+A calm five-second cinematic shot of a dark teal background with soft moving light, subtle dust particles, premium educational brand atmosphere, no people, no readable text.
+```
+
+The preset defaults to five seconds, cheapest sensible, text-to-video, and no reference frame. It is intended for a small validation of job submission, polling, download, local save, metadata, and asset-log behavior.
 
 Generated video metadata includes provider, model, mode, prompt source, prompt hash/summary, reference frame IDs when used, duration, aspect ratio, timestamp, status, cost when known, relative output path, warnings, advisor summary, provider payload, and `human_review_required: true`.
 
-The normal UI shows relative paths and frame labels. Provider payloads exclude API keys, secret-like values, absolute local paths, and uploaded full video paths. Future paid/remote providers must require explicit consent before prompts or selected reference frame images are sent. Generated video asset-log rows use `source_or_generated = generated_video`, `keep_reject = needs_review`, and `historical_or_brand_risk = needs_review`.
+The normal UI shows relative paths and frame labels. Provider payload previews and normal metadata exclude API keys, secret-like values, absolute local paths, and uploaded full video paths. OpenRouter image-to-video may send only one selected extracted frame image after explicit consent and only when the chosen model advertises frame-image support. Generated video asset-log rows use `source_or_generated = generated_video`, `keep_reject = needs_review`, and `historical_or_brand_risk = needs_review`.
 
 ## Review And Final Pack
 
@@ -179,8 +192,8 @@ If FFmpeg is unavailable, the app still runs and stores video sources, but frame
 - OpenRouter should be described as the router/provider; the selected model should be described as the text generator.
 - Text-planning calls must not send uploaded media or extracted frames to OpenRouter.
 - Vision prefill may send only explicitly selected extracted frame images after user consent; original videos and uploaded source media must never be sent.
-- Video generation is mock-only in the current implementation. Future real video providers must require explicit user consent before any remote or paid call.
-- Image-to-video may send only one selected extracted frame reference image to a future provider; full uploaded videos must never be sent.
+- Real video generation is routed through OpenRouter where supported and requires explicit user consent before any remote or paid call.
+- Image-to-video may send only one selected extracted frame reference image through OpenRouter when the model supports frame images; full uploaded videos must never be sent.
 - Video provider payloads must not include absolute local paths, API keys, secrets, or full uploaded video paths.
 - Generated video output always requires human review before publication.
 - Generated content and uploaded media under `content/` should remain ignored except `content/.gitkeep`.
@@ -192,7 +205,7 @@ If FFmpeg is unavailable, the app still runs and stores video sources, but frame
 
 ## Next Recommended Development Steps
 
-1. Add a real video provider integration behind explicit consent and safe provider payload tests.
+1. Run one reviewed low-risk OpenRouter video smoke test and adjust the isolated payload builder if a model requires different provider fields.
 2. Add safer file-size checks and extension validation for uploads.
 3. Improve source summaries for pasted text and manual descriptions while staying local-only.
 4. Add a simple asset scoring workflow in `asset-log.csv`.

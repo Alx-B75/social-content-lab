@@ -54,14 +54,28 @@ def recommend_video_model(
     candidates = [capability for capability in available if mode in capability.modes]
     if mode == IMAGE_TO_VIDEO:
         candidates = [capability for capability in candidates if capability.supports_reference_image]
+        if not candidates:
+            mode = TEXT_TO_VIDEO
+            candidates = [capability for capability in available if mode in capability.modes]
+            warnings = ["No selected provider/model advertises frame-image support, so text-to-video is recommended instead."]
+        else:
+            warnings = []
+    else:
+        warnings = []
+    real_candidates = [capability for capability in candidates if capability.configured and capability.implemented and not capability.is_mock]
+    if real_candidates:
+        candidates = real_candidates
     selected = _rank_capabilities(candidates, user_preference, duration_seconds, aspect_ratio)[0] if candidates else _fallback_capability(mode)
 
     reason = _reason_for_selection(mode, selected, positive_frames, user_preference)
-    warnings = compatibility_warnings(selected, mode, duration_seconds, aspect_ratio)
+    warnings.extend(compatibility_warnings(selected, mode, duration_seconds, aspect_ratio))
     if not selected.configured or not selected.implemented:
         warnings.append("Real video provider not configured yet.")
     risk_notes = _risk_notes(project, answers, content_pack, prompt_text, mode, positive_frames)
     inputs = ["reviewed prompt text"]
+    if prompt_text and prompt_text.strip():
+        inputs.append("prompt")
+    inputs.append("negative prompt if provided and supported by the selected provider/model")
     if mode == IMAGE_TO_VIDEO and positive_frames:
         inputs.append("one selected extracted frame image")
         inputs.append("selected frame source_id/frame_id metadata")
@@ -73,7 +87,7 @@ def recommend_video_model(
         model_name=selected.model_name,
         display_name=selected.display_name,
         reason=reason,
-        cost_estimate=selected.estimated_cost_band if selected.pricing_known else "unknown",
+        cost_estimate=_cost_estimate_label(selected),
         known_limitations=selected.known_limitations,
         inputs_that_would_be_sent=inputs,
         risk_notes=risk_notes,
@@ -128,9 +142,10 @@ def manual_override_warnings(
 
 def is_helper_video_model(capability: VideoModelCapability) -> bool:
     """Return whether a capability describes a helper/router pseudo-model."""
-    combined = f"{capability.provider_name}/{capability.model_name}/{capability.display_name}".lower()
-    helper_terms = ["openrouter/auto", "router", "helper", "auto"]
-    return any(term in combined for term in helper_terms)
+    model_name = capability.model_name.lower()
+    display_name = capability.display_name.lower()
+    provider_model_id = f"{capability.provider_name}/{capability.model_name}".lower()
+    return provider_model_id == "openrouter/auto" or model_name in {"auto", "router"} or "helper" in display_name or display_name == "auto router"
 
 
 def _eligible_capabilities(capabilities: list[VideoModelCapability]) -> list[VideoModelCapability]:
@@ -192,10 +207,21 @@ def _reason_for_selection(
         reasons.append("No suitable selected frame reference is available, so text-to-video is the safest fallback route.")
     if selected.is_mock:
         reasons.append("The mock local provider is recommended for this MVP because it exercises the workflow without spending money.")
+    elif selected.provider_name == "openrouter":
+        reasons.append("OpenRouter is configured and the selected model advertises video generation capability.")
     reasons.append(f"Preference considered: {user_preference}.")
     if positive_frames:
         reasons.append(f"{len(positive_frames)} selected frame reference(s) can inform the job.")
     return reasons
+
+
+def _cost_estimate_label(capability: VideoModelCapability) -> str:
+    """Return a readable cost estimate label."""
+    if capability.cost_estimate_confidence == "known" and capability.estimated_cost is not None:
+        return f"${capability.estimated_cost:.4f} estimated ({capability.estimated_cost_band})"
+    if capability.cost_estimate_confidence == "low":
+        return "cost estimate low confidence; catalogue pricing is a hint only"
+    return capability.estimated_cost_band if capability.pricing_known else "unknown"
 
 
 def _risk_notes(

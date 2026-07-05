@@ -55,7 +55,7 @@ def render_content_pack_panel(
     _render_file_previews(content_pack_builder, project)
     render_llm_planning_panel(content_pack_builder.project_service.config, content_pack_builder.project_service, project, sources, st.session_state.get("answers", answers), recommendation)
     render_review_pack_panel(project)
-    render_video_generation_panel(project, sources, st.session_state.get("answers", answers), current_pack)
+    render_video_generation_panel(content_pack_builder.project_service.config, project, sources, st.session_state.get("answers", answers), current_pack)
     return current_pack
 
 

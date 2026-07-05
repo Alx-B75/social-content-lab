@@ -55,6 +55,8 @@ class VideoGenerationRequest(BaseModel):
     seed: int | None = None
     settings: dict[str, Any] = Field(default_factory=dict)
     consent_checked: bool = False
+    max_spend_usd: float = 1.0
+    unknown_cost_acknowledged: bool = False
 
 
 class VideoGenerationResult(BaseModel):
@@ -71,6 +73,8 @@ class VideoGenerationResult(BaseModel):
     error_type: str | None = None
     error_message: str | None = None
     provider_payload: dict[str, Any] = Field(default_factory=dict)
+    provider_job_id: str | None = None
+    polling_url: str | None = None
 
 
 def discover_video_prompt_sources(project: ContentProject, custom_prompt: str = "") -> list[PromptSource]:
@@ -152,6 +156,10 @@ def validate_video_generation_request(
             errors.append("Explicit paid/remote provider consent is required.")
         if not capability.is_mock and (not capability.configured or not capability.implemented):
             errors.append("Real video provider not configured yet.")
+        if not capability.is_mock and capability.cost_estimate_confidence == "known" and capability.estimated_cost is not None and capability.estimated_cost > request.max_spend_usd:
+            errors.append("Estimated video generation cost exceeds the configured max test spend.")
+        if not capability.is_mock and capability.cost_estimate_confidence in {"low", "unavailable"} and not request.unknown_cost_acknowledged:
+            errors.append("Cost estimate is unavailable or low-confidence and requires explicit acknowledgement.")
     return errors
 
 
@@ -163,8 +171,10 @@ def build_provider_payload(request: VideoGenerationRequest) -> dict[str, Any]:
         "negative_prompt": _sanitize_provider_text(request.negative_prompt),
         "duration_seconds": request.duration_seconds,
         "aspect_ratio": request.aspect_ratio,
+        "resolution": request.settings.get("resolution"),
+        "size": request.settings.get("size"),
         "seed": request.seed,
-        "settings": request.settings,
+        "settings": _sanitize_value(request.settings),
     }
     if request.reference_frame is not None:
         payload["reference_frame"] = {
@@ -173,6 +183,7 @@ def build_provider_payload(request: VideoGenerationRequest) -> dict[str, Any]:
             "file_name": request.reference_frame.file_name,
             "role": request.reference_frame.selected_role.value,
         }
+        payload["reference_frame_sent"] = request.mode == IMAGE_TO_VIDEO
     return payload
 
 
@@ -287,15 +298,26 @@ def _metadata(
         "reference_frame": reference,
         "duration_seconds": request.duration_seconds,
         "aspect_ratio": request.aspect_ratio,
+        "resolution": request.settings.get("resolution"),
+        "size": request.settings.get("size"),
+        "reference_frame_sent": bool(request.reference_frame and request.mode == IMAGE_TO_VIDEO),
         "created_timestamp": datetime.now(timezone.utc).isoformat(),
         "status": provider_result.status,
-        "cost": provider_result.cost or (capability.estimated_cost_band if capability and capability.pricing_known else None),
+        "cost": provider_result.cost,
+        "estimated_cost": capability.estimated_cost if capability else None,
+        "actual_cost": _actual_cost(provider_result),
+        "cost_estimate_confidence": capability.cost_estimate_confidence if capability else "unavailable",
+        "cost_estimate_note": capability.cost_estimate_note if capability else "Cost estimate unavailable.",
         "local_output_relative_path": output_relative,
         "metadata_relative_path": _relative_to_project(project, metadata_path),
         "warnings": _dedupe(warnings),
         "advisor_recommendation_summary": advisor_recommendation.model_dump(mode="json") if advisor_recommendation else None,
         "provider_payload": provider_payload,
         "provider_job_id": provider_result.provider_job_id,
+        "openrouter_job_id": provider_result.provider_job_id if request.provider_name == "openrouter" else None,
+        "polling_url": provider_result.raw_metadata.get("polling_url"),
+        "generation_id": provider_result.raw_metadata.get("generation_id"),
+        "usage": provider_result.raw_metadata.get("usage"),
         "error_type": provider_result.error_type,
         "error_message": provider_result.error_message,
         "human_review_required": True,
@@ -321,6 +343,8 @@ def _app_result(
         error_type=result.error_type,
         error_message=result.error_message,
         provider_payload=provider_payload,
+        provider_job_id=result.provider_job_id,
+        polling_url=result.raw_metadata.get("polling_url"),
     )
 
 
@@ -349,7 +373,7 @@ def _upsert_generated_video_asset_log(project: ContentProject, metadata: dict[st
         "source_or_generated": "generated_video",
         "file_name": str(metadata.get("local_output_relative_path") or metadata.get("metadata_relative_path") or ""),
         "tool_or_model": f"{metadata['provider']}/{metadata['model']}",
-        "estimated_cost_band": str(metadata.get("cost") or "unknown"),
+        "estimated_cost_band": str(metadata.get("actual_cost") or metadata.get("estimated_cost") or "unknown"),
         "time_spent_minutes": "",
         "rating": "unrated",
         "historical_or_brand_risk": "needs_review",
@@ -370,6 +394,14 @@ def _upsert_generated_video_asset_log(project: ContentProject, metadata: dict[st
 def _capability_for(capabilities: list[VideoModelCapability], provider_name: str, model_name: str) -> VideoModelCapability | None:
     """Return a capability for a provider/model pair."""
     return next((capability for capability in capabilities if capability.provider_name == provider_name and capability.model_name == model_name), None)
+
+
+def _actual_cost(provider_result: VideoProviderGenerationResult) -> float | str | None:
+    """Return actual provider usage cost when available."""
+    usage = provider_result.raw_metadata.get("usage")
+    if isinstance(usage, dict) and usage.get("cost") is not None:
+        return usage.get("cost")
+    return provider_result.cost
 
 
 def _read_csv_rows(path: Path) -> list[dict[str, str]]:
@@ -408,6 +440,17 @@ def _sanitize_provider_text(text: str) -> str:
     redacted = re.sub(r"[A-Za-z]:[\\/][^\s`'\"<>]+", "[local-path-redacted]", redacted)
     redacted = re.sub(r"(?i)(?:content|cache)[\\/][^\s`'\"<>]+", "[local-path-redacted]", redacted)
     return redacted
+
+
+def _sanitize_value(value: Any) -> Any:
+    """Sanitize nested provider-preview values."""
+    if isinstance(value, str):
+        return _sanitize_provider_text(value)
+    if isinstance(value, list):
+        return [_sanitize_value(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _sanitize_value(item) for key, item in value.items()}
+    return value
 
 
 def _dedupe(values: list[str]) -> list[str]:
