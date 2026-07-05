@@ -64,12 +64,17 @@ requirements.txt        Python dependencies
 - Compares deterministic and LLM-assisted pack sections side by side.
 - Persists section selections, custom text, reviewer notes, status, and export history in `review-state.json`.
 - Exports attributed final section files and a combined `final-pack.md` without modifying source packs.
+- Provides sidebar workflow navigation for Project, Sources, Frames, Planning, Review Pack, Generate Video, Diagnostics, and All Stages.
+- Shows compact sidebar status indicators for project, sources, frames, planning, final pack, and generated video outputs.
+- Provides a loaded-project shortcut to jump directly to Generate Video.
 - Provides a downstream `Generate Video` section for reviewed prompt selection, video route/provider/model recommendation, explicit consent controls, mock/local generation, output metadata, and generated video asset logging.
 - Recommends image-to-video when selected positive extracted frame references exist, and text-to-video when no suitable frame reference exists.
 - Includes a mock local video provider that can test the full workflow without paid calls and without sending data to a remote provider.
 - Can refresh and cache OpenRouter video generation models from the dedicated video model endpoint when `OPENROUTER_API_KEY` is configured.
 - Can recommend and submit an explicitly consented OpenRouter-routed video job, poll status, download the completed MP4, save metadata, and log the generated video asset.
 - Includes request preview, max test spend, unknown-cost acknowledgement, and real-call consent controls before OpenRouter video generation.
+- Locks active paid video generation requests in Streamlit session state to prevent duplicate paid submissions while a job is active.
+- Shows visible video generation progress states and preserves submitted job/status metadata when polling or download fails.
 - Saves generated video outputs and metadata under `content/<project-id>/outputs/video/` using versioned filenames.
 
 ## Intentionally Not Implemented Yet
@@ -141,6 +146,31 @@ Generated video metadata includes provider, model, mode, prompt source, prompt h
 
 The normal UI shows relative paths and frame labels. Provider payload previews and normal metadata exclude API keys, secret-like values, absolute local paths, and uploaded full video paths. OpenRouter image-to-video may send only one selected extracted frame image after explicit consent and only when the chosen model advertises frame-image support. Generated video asset-log rows use `source_or_generated = generated_video`, `keep_reject = needs_review`, and `historical_or_brand_risk = needs_review`.
 
+Real OpenRouter generation uses a paid-generation lock in `st.session_state`. Once a real request is submitted, the UI immediately shows that the generation request was submitted, identifies the selected model, mode, duration, max spend, and waits for job status. A second paid submission is blocked with:
+
+```text
+A generation job is already running. Wait for it to finish before submitting another paid request.
+```
+
+The lock is cleared only after completion, safe failure, timeout, or explicit user reset of a stale active state. Paid calls are not retried automatically.
+
+## Workflow Navigation
+
+The sidebar workflow navigation lets users move directly among major stages without scrolling through a single long page:
+
+```text
+Project
+Sources
+Frames
+Planning
+Review Pack
+Generate Video
+Diagnostics
+All Stages
+```
+
+The sidebar shows the loaded project, workflow route, and status indicators for key prerequisites and outputs. `Go to Generate Video` is available once a project is loaded. Later stages render guidance instead of failing when prerequisites are missing; Generate Video can still proceed with a custom prompt if no final prompt exists yet.
+
 ## Review And Final Pack
 
 The review panel supports deterministic, LLM-assisted, and custom choices for brief, script, storyboard, prompts, and captions. Review status can be `draft`, `needs_review`, `approved`, or `published`. Final exports retain section-source attribution and remain local under ignored project folders in `content/`.
@@ -195,6 +225,7 @@ If FFmpeg is unavailable, the app still runs and stores video sources, but frame
 - Real video generation is routed through OpenRouter where supported and requires explicit user consent before any remote or paid call.
 - Image-to-video may send only one selected extracted frame reference image through OpenRouter when the model supports frame images; full uploaded videos must never be sent.
 - Video provider payloads must not include absolute local paths, API keys, secrets, or full uploaded video paths.
+- Duplicate paid video generation submissions must remain blocked while a generation job is active.
 - Generated video output always requires human review before publication.
 - Generated content and uploaded media under `content/` should remain ignored except `content/.gitkeep`.
 - Local catalogue/API cache files under `cache/` should remain ignored.

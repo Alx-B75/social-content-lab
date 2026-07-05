@@ -1,6 +1,7 @@
 """Streamlit panel for controlled video generation."""
 
 import json
+from datetime import datetime, timezone
 
 import streamlit as st
 
@@ -34,6 +35,9 @@ LOW_RISK_OPENROUTER_VIDEO_SMOKE_TEST = {
     "mode": TEXT_TO_VIDEO,
     "preference": "cheapest sensible",
 }
+VIDEO_GENERATION_LOCK_KEY = "video_generation_in_progress"
+VIDEO_GENERATION_LAST_RESULT_KEY = "video_generation_last_result"
+DUPLICATE_GENERATION_WARNING = "A generation job is already running. Wait for it to finish before submitting another paid request."
 
 
 def render_video_generation_panel(
@@ -114,6 +118,13 @@ def render_video_generation_panel(
     override_warnings = manual_override_warnings(selected_capability, mode, int(duration_seconds), aspect_ratio)
     for warning in override_warnings:
         st.warning(warning)
+    active_lock = active_generation_lock(st.session_state, project.project_id)
+    if active_lock:
+        st.warning(DUPLICATE_GENERATION_WARNING)
+        _render_active_generation(active_lock)
+        if st.button("Clear active generation state"):
+            clear_generation_lock(st.session_state)
+            st.rerun()
 
     if selected_capability.is_mock:
         st.info("Mock provider selected. It does not create a real provider-generated video and does not spend money.")
@@ -164,14 +175,40 @@ def render_video_generation_panel(
     for error in blocking_errors:
         st.error(error)
     button_label = "Generate real video via OpenRouter" if selected_capability.provider_name == "openrouter" else "Generate video"
-    if st.button(button_label, disabled=bool(blocking_errors)):
-        result = generate_video_asset(
-            project=project,
-            request=request,
-            advisor_recommendation=recommendation,
-            providers=providers,
-            capabilities=capabilities,
-        )
+    button_disabled = bool(blocking_errors) or bool(active_lock and not selected_capability.is_mock)
+    if st.button(button_label, disabled=button_disabled):
+        if active_generation_lock(st.session_state, project.project_id) and not selected_capability.is_mock:
+            st.warning(DUPLICATE_GENERATION_WARNING)
+            return
+        if not selected_capability.is_mock:
+            start_generation_lock(st.session_state, project.project_id, request, selected_capability.display_name)
+        with st.status("Generation request submitted.", expanded=True) as status:
+            status.write("Validating request.")
+            status.write(
+                f"Waiting for OpenRouter job status... Model: {selected_capability.provider_name}/{selected_capability.model_name}; "
+                f"mode: {mode.replace('_', '-')}; duration: {int(duration_seconds)}s; max spend: ${float(max_spend_usd):.2f}."
+            )
+            status.write("Submitting job.")
+            result = generate_video_asset(
+                project=project,
+                request=request,
+                advisor_recommendation=recommendation,
+                providers=providers,
+                capabilities=capabilities,
+            )
+            if result.provider_job_id:
+                status.write(f"Job submitted: `{result.provider_job_id}`.")
+            status.write("Polling.")
+            if result.status == "completed":
+                status.write("Completed.")
+            if result.output_path:
+                status.write("Downloading.")
+                status.write(f"Saved: `{result.output_path.relative_to(project.project_path).as_posix()}`.")
+            if result.status == "failed":
+                status.update(label="Generation failed or timed out.", state="error")
+            else:
+                status.update(label="Generation completed and saved.", state="complete")
+        finish_generation_lock(st.session_state, project.project_id, result)
         if result.status == "failed":
             st.error(result.error_message or "Video generation failed.")
         else:
@@ -239,6 +276,85 @@ def _render_request_preview(preview: dict[str, object]) -> None:
         if not preview["spend_guard_passed"]:
             st.error("Estimated cost exceeds max test spend.")
         _write_list("Inputs that would be sent", list(preview.get("inputs_sent") or []))
+
+
+def start_generation_lock(session_state: object, project_id: str, request: VideoGenerationRequest, model_label: str) -> dict[str, object]:
+    """Store an active paid-generation lock in session state."""
+    lock = {
+        "project_id": project_id,
+        "provider": request.provider_name,
+        "model": request.model_name,
+        "model_label": model_label,
+        "mode": request.mode,
+        "duration_seconds": request.duration_seconds,
+        "max_spend_usd": request.max_spend_usd,
+        "prompt_source": request.prompt_source_label,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "status": "submitting",
+        "job_id": None,
+    }
+    session_state[VIDEO_GENERATION_LOCK_KEY] = lock
+    return lock
+
+
+def active_generation_lock(session_state: object, project_id: str | None = None) -> dict[str, object] | None:
+    """Return active generation lock metadata when present."""
+    lock = session_state.get(VIDEO_GENERATION_LOCK_KEY)
+    if not isinstance(lock, dict):
+        return None
+    if project_id and lock.get("project_id") != project_id:
+        return None
+    return lock
+
+
+def finish_generation_lock(session_state: object, project_id: str, result: object) -> None:
+    """Persist terminal generation result metadata and clear active lock."""
+    last_result = {
+        "project_id": project_id,
+        "provider": getattr(result, "provider", None),
+        "model": getattr(result, "model", None),
+        "status": getattr(result, "status", None),
+        "job_id": getattr(result, "provider_job_id", None),
+        "polling_url": getattr(result, "polling_url", None),
+        "error_type": getattr(result, "error_type", None),
+        "error_message": getattr(result, "error_message", None),
+        "metadata_path": str(getattr(result, "metadata_path", "")),
+        "output_path": str(getattr(result, "output_path", "")) if getattr(result, "output_path", None) else None,
+        "finished_at": datetime.now(timezone.utc).isoformat(),
+    }
+    session_state[VIDEO_GENERATION_LAST_RESULT_KEY] = last_result
+    clear_generation_lock(session_state)
+
+
+def clear_generation_lock(session_state: object) -> None:
+    """Clear the active paid-generation lock."""
+    if VIDEO_GENERATION_LOCK_KEY in session_state:
+        del session_state[VIDEO_GENERATION_LOCK_KEY]
+
+
+def duplicate_generation_warning() -> str:
+    """Return the duplicate paid-generation warning copy."""
+    return DUPLICATE_GENERATION_WARNING
+
+
+def _render_active_generation(lock: dict[str, object]) -> None:
+    """Render active generation metadata without exposing secrets."""
+    started_at = lock.get("started_at")
+    elapsed = ""
+    if started_at:
+        try:
+            elapsed_seconds = int((datetime.now(timezone.utc) - datetime.fromisoformat(str(started_at))).total_seconds())
+            elapsed = f"Elapsed: {elapsed_seconds}s"
+        except ValueError:
+            elapsed = ""
+    st.write(f"Model: `{lock.get('provider')}/{lock.get('model')}`")
+    st.write(f"Mode: `{str(lock.get('mode')).replace('_', '-')}`")
+    st.write(f"Duration: {lock.get('duration_seconds')} seconds")
+    st.write(f"Max spend: ${float(lock.get('max_spend_usd') or 0):.2f}")
+    if lock.get("job_id"):
+        st.write(f"Job ID: `{lock.get('job_id')}`")
+    if elapsed:
+        st.write(elapsed)
 
 
 def _render_reference_frame_selector(frames: list[FrameRecord]) -> FrameRecord | None:

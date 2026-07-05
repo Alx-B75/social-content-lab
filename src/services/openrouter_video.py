@@ -311,15 +311,29 @@ class OpenRouterVideoProvider:
         if capability is None:
             return VideoProviderGenerationResult(status="failed", error_type="unknown_model", error_message="Selected OpenRouter video model is unavailable in the current catalogue.")
         include_reference = request.mode == IMAGE_TO_VIDEO and bool(request.reference_image_path) and capability.supports_reference_image
+        submitted: dict[str, Any] = {}
+        completed: dict[str, Any] = {}
         try:
             payload = build_openrouter_video_request_payload(request, capability, include_reference)
             submitted = self._submit(payload)
             completed = self._poll_until_complete(submitted)
             content = self._download(completed)
         except httpx.HTTPStatusError as error:
-            return VideoProviderGenerationResult(status="failed", error_type="http_error", error_message=safe_openrouter_error_message(error))
-        except (httpx.HTTPError, json.JSONDecodeError, OSError, ValueError) as error:
-            return VideoProviderGenerationResult(status="failed", error_type=_safe_error_type(error), error_message=_safe_error_message(error))
+            return VideoProviderGenerationResult(
+                status="failed",
+                error_type="http_error",
+                error_message=safe_openrouter_error_message(error),
+                provider_job_id=str(completed.get("id") or submitted.get("id") or "") or None,
+                raw_metadata=_job_metadata(completed or submitted),
+            )
+        except (httpx.HTTPError, json.JSONDecodeError, OSError, ValueError, TimeoutError) as error:
+            return VideoProviderGenerationResult(
+                status="failed",
+                error_type=_safe_error_type(error),
+                error_message=_safe_error_message(error),
+                provider_job_id=str(completed.get("id") or submitted.get("id") or "") or None,
+                raw_metadata=_job_metadata(completed or submitted),
+            )
         target_output_path.parent.mkdir(parents=True, exist_ok=True)
         target_output_path.write_bytes(content)
         usage = completed.get("usage") if isinstance(completed.get("usage"), dict) else {}
@@ -329,12 +343,7 @@ class OpenRouterVideoProvider:
             output_path=target_output_path,
             cost=str(cost) if cost is not None else None,
             provider_job_id=str(completed.get("id") or submitted.get("id") or ""),
-            raw_metadata={
-                "polling_url": completed.get("polling_url") or submitted.get("polling_url"),
-                "generation_id": completed.get("generation_id") or submitted.get("generation_id"),
-                "usage": usage,
-                "unsigned_urls_present": bool(completed.get("unsigned_urls")),
-            },
+            raw_metadata={**_job_metadata(completed or submitted), "usage": usage, "unsigned_urls_present": bool(completed.get("unsigned_urls"))},
         )
 
     def _submit(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -377,6 +386,17 @@ class OpenRouterVideoProvider:
 def _video_models_url(config: AppConfig) -> str:
     """Return OpenRouter video models endpoint URL."""
     return f"{config.openrouter_base_url.rstrip('/')}/videos/models"
+
+
+def _job_metadata(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return safe persisted OpenRouter job metadata."""
+    usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+    return {
+        "polling_url": payload.get("polling_url"),
+        "generation_id": payload.get("generation_id"),
+        "usage": usage,
+        "status": payload.get("status"),
+    }
 
 
 def _videos_url(config: AppConfig) -> str:

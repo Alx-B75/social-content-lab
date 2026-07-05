@@ -59,6 +59,12 @@ Selections, reviewer notes, export history, and status (`draft`, `needs_review`,
 
 Review state and final outputs remain under the project's ignored `content/` folder. Export is blocked when selected text contains secret-like values, absolute local paths, or local media/cache paths.
 
+## Workflow Navigation
+
+The sidebar includes workflow navigation for `Project`, `Sources`, `Frames`, `Planning`, `Review Pack`, `Generate Video`, `Diagnostics`, and `All Stages`. Each route shows a compact status, such as whether a project is loaded, sources are present, frames are extracted, final-pack files exist, and generated video outputs are available.
+
+When a project is loaded, the sidebar provides a `Go to Generate Video` shortcut so you can jump directly to video generation without scrolling through every upstream panel. Later stages show guidance when prerequisites are missing; for example, Generate Video can still use a custom prompt when no final prompt exists yet.
+
 ## Generate Video MVP
 
 The app includes a controlled `Generate Video` section downstream of the content/review workflow. It can discover prompt sources in this order: `final-prompts.md`, `prompts.llm.md`, `prompts.md`, then a custom prompt entered in the UI.
@@ -82,8 +88,11 @@ Real OpenRouter video generation can spend credits. The UI includes:
 - Blocking when known estimated cost exceeds the max spend.
 - An extra acknowledgement when cost is unknown.
 - Explicit confirmation before submitting a real OpenRouter video job.
+- A paid-generation lock that disables duplicate real submissions while a job is active.
 
 Image-to-video may send only the selected extracted frame image after explicit consent and only when the selected OpenRouter model advertises frame-image support. Full uploaded videos, absolute local paths, API keys, and secrets are never sent in provider payload previews or normal metadata.
+
+After a real OpenRouter request is submitted, the app shows visible progress states such as validation, submission, polling, completion, download/save, or failure. Active paid jobs block new paid submissions until the job completes, fails safely, times out, or the user explicitly clears a stale active state. The app does not automatically retry paid video generation calls.
 
 Generated video outputs and metadata are saved under:
 

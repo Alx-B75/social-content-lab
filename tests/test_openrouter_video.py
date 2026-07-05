@@ -360,6 +360,7 @@ def test_openrouter_poll_timeout_returns_safe_error(app_config, content_project)
 
     assert result.status == "failed"
     assert result.error_type == "timeout"
+    assert result.provider_job_id == "job-1"
 
 
 def tmp_project(tmp_path: Path):
